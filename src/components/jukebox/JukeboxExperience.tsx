@@ -195,6 +195,8 @@ export function JukeboxExperience() {
   const playingIdRef = useRef(playingId);
   const selectedIdRef = useRef(selectedId);
   const progressRef = useRef(progress);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const resizeRendererRef = useRef<() => void>(() => {});
   playingIdRef.current = playingId;
   selectedIdRef.current = selectedId;
   progressRef.current = progress;
@@ -203,6 +205,7 @@ export function JukeboxExperience() {
     const commitBreakpoint = () => {
       const next = breakpointFromWidth(window.innerWidth);
       setBreakpoint((current) => (current === next ? current : next));
+      resizeRendererRef.current();
     };
 
     commitBreakpoint();
@@ -242,7 +245,7 @@ export function JukeboxExperience() {
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || songs.length === 0 || breakpoint === null) return;
+    if (!canvas) return;
 
     const renderer = new THREE.WebGLRenderer({
       canvas,
@@ -252,6 +255,18 @@ export function JukeboxExperience() {
     });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.6));
     renderer.setClearColor(0x000000, 0);
+    rendererRef.current = renderer;
+
+    return () => {
+      renderer.dispose();
+      if (rendererRef.current === renderer) rendererRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const renderer = rendererRef.current;
+    if (!canvas || !renderer || songs.length === 0 || breakpoint === null) return;
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 100);
@@ -430,6 +445,7 @@ export function JukeboxExperience() {
     canvas.addEventListener("pointerleave", onPointerLeave);
     canvas.addEventListener("wheel", onWheel, { passive: false });
     window.addEventListener("resize", resize);
+    resizeRendererRef.current = resize;
     resize();
 
     sceneApiRef.current = {
@@ -500,8 +516,15 @@ export function JukeboxExperience() {
 
       renderer.render(scene, camera);
     };
+    // Render every card once so off-screen textures are counted, then cull again.
+    cards.forEach((card) => {
+      card.mesh.frustumCulled = false;
+    });
     activeAnimationLoopCount += 1;
     animate();
+    cards.forEach((card) => {
+      card.mesh.frustumCulled = true;
+    });
 
     if (process.env.NODE_ENV === "development") {
       window.__musicBoxDebug = {
@@ -529,6 +552,7 @@ export function JukeboxExperience() {
       canvas.removeEventListener("pointerleave", onPointerLeave);
       canvas.removeEventListener("wheel", onWheel);
       window.removeEventListener("resize", resize);
+      if (resizeRendererRef.current === resize) resizeRendererRef.current = () => {};
       artworkImages.forEach((image) => {
         image.onload = null;
       });
@@ -540,7 +564,6 @@ export function JukeboxExperience() {
       geometry.dispose();
       group.clear();
       scene.clear();
-      renderer.dispose();
       cardsRef.current = [];
       sceneApiRef.current = null;
     };

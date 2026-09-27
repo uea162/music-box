@@ -195,7 +195,8 @@ X = S*cos(b)*sin(a);  Y = -S*sin(b);  Z = S*(cos(a)*cos(b) - 1);
 - **惯性**：松手时取最近 100 ms 的平均速度；最后一次移动距松手超过 80 ms 则为 0。`v ← v·exp(−3.5·dt)`，低于 4 单位/秒停止。按下时清零。
 - **减少动态效果**：`matchMedia` 的 `change` 监听实时生效。开启时倍率立即归零、惯性清零、视差归零，聚焦直接跳到位；关闭时倍率从 0 以 1.6/s 恢复，不重放开场。
 - **视差**：墙体整体平移最多 ±10 / ±6 px，按住拖拽时冻结，保证拖拽 1:1。
-- **聚焦**：`focus(songId)` 选离屏幕中心最近的副本，以 7.5/s 把它滑到中心；缩放目标 820 以下 1.1、以上 1.38，以 5/s 逼近。
+- **聚焦**：`focus(songId)` 选离屏幕中心最近的副本，以 7.5/s 把它滑到中心；缩放目标 ≤ 820 为 1.1、以上 1.38，以 5/s 逼近。`fitFocus` 算出可用区域（视口减 16 px 边距，再减结果面板：宽屏在右侧，紧凑布局在下方），卡片放不下时缩小缩放目标；卡片会和面板重叠时把整个 group 在屏幕上平移（与视差一样改 `group.position`，不改墙的偏移）。面板挂载后再量一次真实位置（`refit`）。
+- **点中卡片**：卡片被屏幕边缘切到时，`bringIntoView` 二分查找最小的滑动距离，经 `nudge()` 滑到完整可见为止，不强制居中。
 
 ### 3.4 当前完整视觉参数
 
@@ -230,14 +231,19 @@ X = S*cos(b)*sin(a);  Y = -S*sin(b);  Z = S*(cos(a)*cos(b) - 1);
 | `CARD_SEGMENTS_X` / `CARD_SEGMENTS_Y` | `10` / `14` | 卡片网格细分 |
 | `SHADE_FLOOR` / `SHADE_SPAN` | `0.3` / `0.5` | 明暗衰减 |
 | `ALPHA_CUTOFF` | `0.01` | 丢弃透明圆角像素 |
-| `FOCUS_SCALE_WIDE` / `FOCUS_SCALE_COMPACT` / `COMPACT_FOCUS_BELOW_WIDTH` | `1.38` / `1.1` / `820` | 聚焦缩放 |
+| `FOCUS_SCALE_WIDE` / `FOCUS_SCALE_COMPACT` / `COMPACT_LAYOUT_MAX_WIDTH` | `1.38` / `1.1` / `820` | 聚焦缩放的首选值（放不下时才缩小）；宽度 ≤ 820 用紧凑值，与 CSS 断点一致 |
+| `FIT_SEARCH_STEPS` | `18` | 点中被边缘切到的卡时，二分查找最小滑动距离的步数 |
 | `FOCUS_GLIDE_RATE` / `FOCUS_SETTLED_UNITS` / `FOCUS_SCALE_RATE` | `7.5` /s / `0.5` / `5` /s | 聚焦滑动与缩放 |
 | `PARALLAX_SHIFT_X_PX` / `PARALLAX_SHIFT_Y_PX` / `PARALLAX_RATE` | `10` / `6` / `2.8` /s | 视差 |
 | `RESIZE_SETTLE_MS` | `150` | 缩放停止后多久做重新聚焦 / 重新居中 |
 | `CARD_TEXTURE_WIDTH` / `CARD_TEXTURE_HEIGHT` | `420` / `604` | 每张卡片纹理 |
 | `MAX_PIXEL_RATIO` | `1.6` | renderer 像素比上限 |
+| `FOCUS_MARGIN_PX` / `RESULT_PANEL_GAP_PX` | `16` / `24` | 聚焦卡和点中卡可用区域的边距、与结果面板的间距 |
+| `RESULT_PANEL_WIDTH_PX` / `RESULT_PANEL_EDGE_PX` / `RESULT_PANEL_BESIDE_CENTER_PX` / `RESULT_PANEL_COMPACT_TOP_SHARE` | `390` / `21` / `205` / `0.5` | 面板挂载前预测它的位置（与 `.result-panel` 一致） |
+| `CARD_CORNER` / `CARD_ART_CORNER` | `0.105` / `0.075` | 卡片、封面圆角（占卡宽，中心卡约 25 / 18 px） |
+| `CARD_*` 其余 | 见文件 | 参考规格第 9 节的底色、氛围色、封面、标题、副标题、进度条、时间、控制按钮、边框 |
 
-卡片绘制（`drawCard` 里的圆角 46、封面圆角 34、白框 11 px 等）本轮没有改。
+卡片绘制见 `drawCard`：底色 `#1d1921`，模糊封面做氛围色，封面内缩 5%，标题（Instrument Serif）6.6%，副标题 4.5%，进度条在约 82% 高度，下方时间和上一首 / 播放 / 下一首。边框常态 0.5% 12% 白，播放 1.5%，选中 2.2% 纯白。
 
 页面底色是 `#0c090e`。紫色径向光在 `.jukebox-shell` 上，数值来自参考站：
 
@@ -285,7 +291,7 @@ getComputedStyle(document.documentElement).getPropertyValue("--font-display")
 getComputedStyle(document.documentElement).getPropertyValue("--font-ui")
 ```
 
-`drawCard` 里目前仍写着 Avenir Next。那是卡片画图，不在这一批里改。
+`drawCard` 就是这样做的（`cardFonts()`）：标题用 `--font-display` 400，歌手名和时间用 `--font-ui` 400 / 500，后面接繁体在前的中文后备列表。纹理先按当时可用的字体画；如果 web 字体还没加载完，`document.fonts.load` + `document.fonts.ready` 完成后所有纹理重画一次。
 
 ---
 
@@ -297,11 +303,10 @@ getComputedStyle(document.documentElement).getPropertyValue("--font-ui")
    - 球面上的命中是按卡片的角度矩形算的，卡片纹理角落是透明圆角。
    - 点击透明圆角区域理论上仍可能选中卡片。
 
-2. **放大卡片后的随机聚焦可能过度。**
-   - 桌面 `FOCUS_SCALE_WIDE = 1.38` 是小卡片时期留下的值，球面墙下尚未在真机上视觉确认。
+2. **手机上聚焦卡偏小。**
+   - 390 宽时 `FOCUS_SCALE_COMPACT = 1.1`，聚焦卡只有约 40–100 px 宽（按落在哪一列）。F8 规定了 1.1，要放大需先改验收标准。
 
-3. **宽屏上结果面板可能盖住聚焦卡的一部分。**
-   - 1232px 以下面板改为贴右边，821 宽时聚焦卡右半边会在面板下面。面板下有模糊遮罩，影响不大，但尚未和设计确认。
+3. ~~宽屏上结果面板可能盖住聚焦卡的一部分。~~ 已修：聚焦卡在面板左侧（紧凑布局在面板上方）的可用区域内。
 
 4. **外部曲库失败时重复卡明显。**
    - fallback 只有 18 首，15 列每列只分到 1–2 首，补足到 1.5 屏高后同一列几乎全是同一首歌。
@@ -376,11 +381,9 @@ getComputedStyle(document.documentElement).getPropertyValue("--font-ui")
 
 ### P0 必须继续做
 
-#### P0.1 验证并修正放大后的随机聚焦流程
+#### ~~P0.1 验证并修正放大后的随机聚焦流程~~ ✅ 已完成
 
-- **改哪里：** `JukeboxExperience.tsx` 的 `sceneApiRef.current.focus`、`chooseRandom` 和结果面板流程。
-- **预期结果：** 点击 `Pick one record` 后选中卡片自然聚焦但不溢出屏幕；结果面板出现；点击返回后墙体恢复；音频状态正常。
-- **建议方法：** 先视觉验证当前 `targetScale = 1.38`。若过大，桌面建议从 1.12–1.22 之间试，不要改变基础卡片尺寸。确认自动横移在 reveal 期间是否应该暂停或减速。
+- 1440×900 下 1.38 不过大（250 列整卡聚焦后约 270×390 px），保留；缩放只在卡片放不下可用区域时变小。聚焦卡在结果面板左侧（≤ 820 宽时在面板上方），三种尺寸下都完整在屏幕内、不和面板重叠。点中被边缘切到的卡会滑到完整可见。见 3.3 “聚焦”“点中卡片”。
 
 #### P0.2 完成移动端和平板视觉回归
 
@@ -402,9 +405,9 @@ getComputedStyle(document.documentElement).getPropertyValue("--font-ui")
 
 #### P1.1 修正透明圆角的点击命中
 
-- **改哪里：** `clickSong` 的 Raycaster 结果处理。
+- **改哪里：** 在 `hitCard` 求交之后加圆角判定。
 - **预期结果：** 点击透明圆角不选中卡片。
-- **建议方法：** 使用 intersection UV 采样圆角 mask，或用解析式 rounded-rect hit test；不要为每张卡创建复杂圆角几何体。
+- **建议方法：** 求交得到的 (turn, tilt) 换算成卡内坐标后，用解析式圆角矩形判断（圆角半径与 `drawCard` 的 `CARD_CORNER` 一致）；不要为每张卡创建复杂圆角几何体。
 
 #### P1.2 改善 fallback 的重复感
 
@@ -577,6 +580,7 @@ npm run typecheck
 
 5. **减少动态效果必须实时生效。**
    - 没有自动移动、没有开场加速、松手不滑行、拖拽仍 1:1、视差关闭；`matchMedia` 的 `change` 监听不能删。
+   - 惯性以 `docs/ACCEPTANCE.md` 的 S-RM 和代码为准：减少动态效果时关闭惯性。`docs/REFERENCE-LAYOUT.md` 第 10 节记录的是参考站在该模式下仍有惯性，本仓库不照搬。
 
 6. **缩放不重建场景。**
    - 尺寸入口只有 canvas 上的一个 `ResizeObserver`。尺寸变化只重算比例和相机；补槽数量变化才 `relayout`，而且复用网格、材质和纹理。
@@ -605,8 +609,9 @@ npm run typecheck
 12. **构建和 typecheck 必须顺序执行。**
     - 并行执行会与 `.next/types` 生成过程发生竞态。
 
-13. **`drawCard` 的卡片样式单独排期。**
-    - 参考规格第 9 节的卡片绘制还没做，不要顺手改。
+13. **`drawCard` 按参考规格第 9 节绘制。**
+    - 数值都是文件顶部的 `CARD_*` 常量。圆角按 `docs/ACCEPTANCE.md` V2（约 25 / 18 px），不是参考站的 7% / 3.5%。
+    - 字体从 `--font-display` / `--font-ui` 读取，中文后备繁体在前；不要再写死字体名。字体加载完成后所有纹理只重画一次。
 
 14. **不要切换 React Three Fiber，不要把用户参考素材加入网页或上传。**
     - `resource/` 仅用于视觉对照。

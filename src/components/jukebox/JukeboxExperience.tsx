@@ -15,6 +15,7 @@ interface CardRecord {
   texture: THREE.CanvasTexture;
   song: Song;
   image: HTMLImageElement | null;
+  instanceIndex: number;
   baseX: number;
   baseY: number;
   columnSpan: number;
@@ -63,6 +64,94 @@ function seededNumber(value: string) {
 function wrap(value: number, span: number) {
   if (span <= 0) return value;
   return ((value + span / 2) % span + span) % span - span / 2;
+}
+
+type Breakpoint = "desktop" | "tablet" | "mobile";
+
+const BREAKPOINT_RESIZE_DEBOUNCE_MS = 150;
+
+function breakpointFromWidth(width: number): Breakpoint {
+  if (width >= 1180) return "desktop";
+  if (width >= 720) return "tablet";
+  return "mobile";
+}
+
+function gridForBreakpoint(breakpoint: Breakpoint) {
+  if (breakpoint === "mobile") return { columns: 6, rows: 7 };
+  if (breakpoint === "tablet") return { columns: 9, rows: 6 };
+  return { columns: 12, rows: 5 };
+}
+
+let activeAnimationLoopCount = 0;
+
+declare global {
+  interface Window {
+    __musicBoxDebug?: {
+      memory: () => { geometries: number; textures: number };
+      activeLoops: () => number;
+      highlights: () => {
+        selectedCount: number;
+        playingCount: number;
+        songId: string | null;
+        instanceIndex: number | null;
+        title: string | null;
+        artist: string | null;
+      };
+      cardPoints: () => Array<{
+        instanceIndex: number;
+        songId: string;
+        title: string;
+        clientX: number;
+        clientY: number;
+        selected: boolean;
+        playing: boolean;
+      }>;
+    };
+  }
+}
+
+function closestCard(
+  cards: CardRecord[],
+  songId: string | null,
+  preferredInstance: number | null,
+  score: (card: CardRecord) => number = (card) => card.baseX * card.baseX + card.baseY * card.baseY,
+) {
+  if (!songId) return null;
+  const matches = cards.filter((card) => card.song.id === songId);
+  if (!matches.length) return null;
+  if (preferredInstance !== null) {
+    const preferred = matches.find((card) => card.instanceIndex === preferredInstance);
+    if (preferred) return preferred;
+  }
+  let best = matches[0];
+  let bestDistance = score(best);
+  for (let index = 1; index < matches.length; index += 1) {
+    const card = matches[index];
+    const distance = score(card);
+    const nearer = distance < bestDistance - 1e-6;
+    const tie = Math.abs(distance - bestDistance) <= 1e-6 && card.instanceIndex < best.instanceIndex;
+    if (nearer || tie) {
+      best = card;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+function cardVisual(
+  card: CardRecord,
+  playingId: string | null,
+  progress: number,
+  selectedId: string | null,
+  instanceIndex: number | null,
+) {
+  const active = instanceIndex !== null && card.instanceIndex === instanceIndex;
+  const playing = active && card.song.id === playingId;
+  return {
+    playing,
+    progress: playing ? progress : 0,
+    selected: active && card.song.id === selectedId,
+  };
 }
 
 function drawCard(
@@ -175,6 +264,39 @@ export function JukeboxExperience() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedSong, setSelectedSong] = useState<Song | null>(null);
   const [progress, setProgress] = useState(0);
+  const [breakpoint, setBreakpoint] = useState<Breakpoint | null>(null);
+  const playingIdRef = useRef(playingId);
+  const selectedIdRef = useRef(selectedId);
+  const progressRef = useRef(progress);
+  const selectedInstanceRef = useRef<number | null>(null);
+  const toggleSongRef = useRef<(song: Song) => void>(() => {});
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const resizeRendererRef = useRef<() => void>(() => {});
+  playingIdRef.current = playingId;
+  selectedIdRef.current = selectedId;
+  progressRef.current = progress;
+
+  useEffect(() => {
+    const commitBreakpoint = () => {
+      const next = breakpointFromWidth(window.innerWidth);
+      setBreakpoint((current) => (current === next ? current : next));
+      resizeRendererRef.current();
+    };
+
+    commitBreakpoint();
+
+    let timeoutId = 0;
+    const onResize = () => {
+      window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(commitBreakpoint, BREAKPOINT_RESIZE_DEBOUNCE_MS);
+    };
+
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.clearTimeout(timeoutId);
+      window.removeEventListener("resize", onResize);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -198,7 +320,7 @@ export function JukeboxExperience() {
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || songs.length === 0) return;
+    if (!canvas) return;
 
     const renderer = new THREE.WebGLRenderer({
       canvas,
@@ -208,6 +330,18 @@ export function JukeboxExperience() {
     });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.6));
     renderer.setClearColor(0x000000, 0);
+    rendererRef.current = renderer;
+
+    return () => {
+      renderer.dispose();
+      if (rendererRef.current === renderer) rendererRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const renderer = rendererRef.current;
+    if (!canvas || !renderer || songs.length === 0 || breakpoint === null) return;
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 100);
@@ -217,25 +351,22 @@ export function JukeboxExperience() {
 
     const geometry = new THREE.PlaneGeometry(CARD_WIDTH, CARD_HEIGHT, 1, 1);
     // Render beyond every viewport edge so the cylindrical wall stays full-bleed
-    // while it is being dragged. The extra rows are visual instances of the
-    // catalog, each with its own id so selection remains local to one card.
-    const columns = window.innerWidth < 720 ? 6 : window.innerWidth < 1180 ? 9 : 12;
-    const rows = window.innerWidth < 720 ? 7 : window.innerWidth < 1180 ? 6 : 5;
+    // while it is being dragged. Extra cells reuse catalog songs. Playback and
+    // selection store the original song id; the instance index lives on the mesh.
+    const { columns, rows } = gridForBreakpoint(breakpoint);
+    let disposed = false;
+    const artworkImages: HTMLImageElement[] = [];
     const minimumCardCount = columns * rows;
     const wallSongs = Array.from(
       { length: Math.max(songs.length, minimumCardCount) },
-      (_, index) => {
-        const song = songs[index % songs.length];
-        if (index < songs.length) return song;
-        return { ...song, id: `${song.id}-wall-${index}` };
-      },
+      (_, index) => songs[index % songs.length],
     );
     const cards: CardRecord[] = [];
     const columnHeights = Array.from({ length: columns }, () => 0);
     const horizontalPitch = CARD_WIDTH + CARD_GAP_X;
     const wallSpan = columns * horizontalPitch;
 
-    wallSongs.forEach((song) => {
+    wallSongs.forEach((song, index) => {
       const textureCanvas = document.createElement("canvas");
       textureCanvas.width = 420;
       textureCanvas.height = 604;
@@ -252,7 +383,9 @@ export function JukeboxExperience() {
         depthWrite: true,
       });
       const mesh = new THREE.Mesh(geometry, material);
-      const seed = seededNumber(song.id);
+      // Keep the previous per-instance height variation. Clones used to hash a
+      // `-wall-${index}` id; that suffix is only a seed now, not stored state.
+      const seed = seededNumber(index < songs.length ? song.id : `${song.id}-wall-${index}`);
       // The reference wall uses stable column widths. Variation belongs to card
       // height only; scaling the whole card is what made neighbouring cards collide.
       const heightScale = 0.94 + (seed % 5) * 0.025;
@@ -263,6 +396,7 @@ export function JukeboxExperience() {
       columnHeights[col] += scaledHeight + CARD_GAP_Y;
       mesh.position.set(x, y, 0);
       mesh.userData.songId = song.id;
+      mesh.userData.instanceIndex = index;
       mesh.userData.cardIndex = cards.length;
       group.add(mesh);
 
@@ -273,6 +407,7 @@ export function JukeboxExperience() {
         texture,
         song,
         image: null,
+        instanceIndex: index,
         baseX: x,
         baseY: y,
         columnSpan: 0,
@@ -280,17 +415,6 @@ export function JukeboxExperience() {
         visualState: { playing: false, progress: 0, selected: false },
       };
       cards.push(card);
-      drawCard(card, card.visualState);
-
-      if (song.artworkUrl) {
-        const image = new Image();
-        image.crossOrigin = "anonymous";
-        image.onload = () => {
-          card.image = image;
-          drawCard(card, card.visualState);
-        };
-        image.src = song.artworkUrl;
-      }
     });
 
     cards.forEach((card) => {
@@ -299,6 +423,52 @@ export function JukeboxExperience() {
       card.baseY += card.columnSpan / 2;
     });
     cardsRef.current = cards;
+
+    const projectCard = (card: CardRecord, offsetX = 0, offsetY = 0) => {
+      const flatX = wrap(card.baseX + offsetX, wallSpan);
+      const y = wrap(card.baseY + offsetY, card.columnSpan);
+      const theta = flatX / CYLINDER_RADIUS;
+      const centerDistance = Math.min(1, Math.abs(flatX) / (wallSpan * 0.5));
+      const depthCurve = Math.pow(centerDistance, 1.25);
+      const projected = new THREE.Vector3(
+        Math.sin(theta) * CYLINDER_RADIUS,
+        y,
+        (Math.cos(theta) - 1) * CYLINDER_RADIUS - depthCurve * 1.35 - 0.008 * y * y,
+      );
+      projected.project(camera);
+      return projected;
+    };
+    const screenCenterDistance = (card: CardRecord) => {
+      const projected = projectCard(card);
+      return projected.x * projected.x + projected.y * projected.y;
+    };
+    const paintWall = () => {
+      // A rebuild clears the drag offset, so the clicked instance can sit at
+      // the edge or off screen. Always pick this song's copy nearest center.
+      // Clicks inside one breakpoint still keep the card that was clicked.
+      const anchorId = selectedIdRef.current ?? playingIdRef.current;
+      const chosen = anchorId ? closestCard(cards, anchorId, null, screenCenterDistance) : null;
+      selectedInstanceRef.current = chosen?.instanceIndex ?? null;
+      if (chosen) {
+        const projected = projectCard(chosen);
+        if (Math.abs(projected.x) > 1 || Math.abs(projected.y) > 1) {
+          target.set(-chosen.baseX, -chosen.baseY);
+          current.copy(target);
+        }
+      }
+      cards.forEach((card) => {
+        drawCard(
+          card,
+          cardVisual(
+            card,
+            playingIdRef.current,
+            progressRef.current,
+            selectedIdRef.current,
+            selectedInstanceRef.current,
+          ),
+        );
+      });
+    };
 
     const current = new THREE.Vector2(0, 0);
     const target = new THREE.Vector2(0, 0);
@@ -335,8 +505,33 @@ export function JukeboxExperience() {
       const cardIndex = hit?.object.userData.cardIndex as number | undefined;
       const card = typeof cardIndex === "number" ? cards[cardIndex] : undefined;
       if (!card) return;
+      const audio = audioRef.current;
+      const activeSongId = audio?.dataset.songId || playingIdRef.current;
+      const sameSong = activeSongId === card.song.id;
+      const sameInstance = sameSong && selectedInstanceRef.current === card.instanceIndex;
+      selectedInstanceRef.current = card.instanceIndex;
+      selectedIdRef.current = card.song.id;
       setSelectedId(card.song.id);
-      void toggleSong(card.song);
+      if (sameInstance && audio && !audio.paused) {
+        audio.pause();
+        return;
+      }
+      if (sameSong && audio && !audio.paused) {
+        cards.forEach((item) => {
+          drawCard(
+            item,
+            cardVisual(
+              item,
+              card.song.id,
+              progressRef.current,
+              card.song.id,
+              selectedInstanceRef.current,
+            ),
+          );
+        });
+        return;
+      }
+      void toggleSongRef.current(card.song);
     };
 
     const onPointerDown = (event: PointerEvent) => {
@@ -378,12 +573,28 @@ export function JukeboxExperience() {
     canvas.addEventListener("pointerleave", onPointerLeave);
     canvas.addEventListener("wheel", onWheel, { passive: false });
     window.addEventListener("resize", resize);
+    resizeRendererRef.current = resize;
     resize();
+    paintWall();
+    cards.forEach((card) => {
+      if (!card.song.artworkUrl) return;
+      const image = new Image();
+      image.crossOrigin = "anonymous";
+      artworkImages.push(image);
+      image.onload = () => {
+        if (disposed) return;
+        card.image = image;
+        drawCard(card, card.visualState);
+      };
+      image.onerror = () => {};
+      image.src = card.song.artworkUrl;
+    });
 
     sceneApiRef.current = {
       focus(songId: string) {
-        const card = cards.find((item) => item.song.id === songId);
+        const card = closestCard(cards, songId, selectedInstanceRef.current);
         if (!card) return;
+        selectedInstanceRef.current = card.instanceIndex;
         target.set(-card.baseX, -card.baseY);
         targetScale = window.innerWidth < 820 ? 1.1 : 1.38;
       },
@@ -393,6 +604,7 @@ export function JukeboxExperience() {
     };
 
     const animate = () => {
+      if (disposed) return;
       frame = requestAnimationFrame(animate);
       const now = performance.now();
       const delta = Math.min((now - lastFrameTime) / 1000, 0.05);
@@ -447,10 +659,68 @@ export function JukeboxExperience() {
 
       renderer.render(scene, camera);
     };
+    // The debug hook is read-only. Do not add a playback-speed toggle.
+    // Counting off-screen textures needs one unculled render, and only in
+    // development, so production leaves frustum culling at its default.
+    if (process.env.NODE_ENV === "development") {
+      cards.forEach((card) => {
+        card.mesh.frustumCulled = false;
+      });
+    }
+    activeAnimationLoopCount += 1;
     animate();
+    if (process.env.NODE_ENV === "development") {
+      cards.forEach((card) => {
+        card.mesh.frustumCulled = true;
+      });
+      const point = new THREE.Vector3();
+      window.__musicBoxDebug = {
+        memory() {
+          const { geometries, textures } = renderer.info.memory;
+          return { geometries, textures };
+        },
+        activeLoops() {
+          return activeAnimationLoopCount;
+        },
+        highlights() {
+          const selected = cards.filter((card) => card.visualState.selected);
+          const playing = cards.filter((card) => card.visualState.playing);
+          const card = selected[0];
+          return {
+            selectedCount: selected.length,
+            playingCount: playing.length,
+            songId: card?.song.id ?? null,
+            instanceIndex: card?.instanceIndex ?? null,
+            title: card?.song.title ?? null,
+            artist: card?.song.artist ?? null,
+          };
+        },
+        cardPoints() {
+          const rect = canvas.getBoundingClientRect();
+          return cards.map((card) => {
+            card.mesh.getWorldPosition(point);
+            point.project(camera);
+            return {
+              instanceIndex: card.instanceIndex,
+              songId: card.song.id,
+              title: card.song.title,
+              clientX: rect.left + (point.x * 0.5 + 0.5) * rect.width,
+              clientY: rect.top + (-point.y * 0.5 + 0.5) * rect.height,
+              selected: card.visualState.selected,
+              playing: card.visualState.playing,
+            };
+          });
+        },
+      };
+    }
 
     return () => {
+      disposed = true;
       cancelAnimationFrame(frame);
+      activeAnimationLoopCount -= 1;
+      if (process.env.NODE_ENV === "development") {
+        delete window.__musicBoxDebug;
+      }
       canvas.removeEventListener("pointerdown", onPointerDown);
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUp);
@@ -458,27 +728,38 @@ export function JukeboxExperience() {
       canvas.removeEventListener("pointerleave", onPointerLeave);
       canvas.removeEventListener("wheel", onWheel);
       window.removeEventListener("resize", resize);
+      if (resizeRendererRef.current === resize) resizeRendererRef.current = () => {};
+      artworkImages.forEach((image) => {
+        image.onload = null;
+        image.onerror = null;
+        image.src = "";
+      });
       cards.forEach((card) => {
         card.texture.dispose();
+        card.mesh.material.map = null;
         card.mesh.material.dispose();
       });
       geometry.dispose();
-      renderer.dispose();
+      group.clear();
+      scene.clear();
       cardsRef.current = [];
       sceneApiRef.current = null;
     };
-  // The scene intentionally rebuilds only when the catalog changes.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [songs]);
+  // Rebuild only when the catalog or breakpoint changes. Playback is read from
+  // refs, and card clicks call toggleSongRef, so progress ticks and play/pause
+  // do not recreate textures. Resize inside one breakpoint only updates size.
+  }, [songs, breakpoint]);
 
   const refreshCards = useCallback(
     (nextPlayingId = playingId, nextProgress = progress, nextSelectedId = selectedId) => {
       cardsRef.current.forEach((card) => {
-        const nextState = {
-          playing: card.song.id === nextPlayingId,
-          progress: card.song.id === nextPlayingId ? nextProgress : 0,
-          selected: card.song.id === nextSelectedId,
-        };
+        const nextState = cardVisual(
+          card,
+          nextPlayingId,
+          nextProgress,
+          nextSelectedId,
+          selectedInstanceRef.current,
+        );
         const unchanged =
           card.visualState.playing === nextState.playing &&
           card.visualState.selected === nextState.selected &&
@@ -498,7 +779,7 @@ export function JukeboxExperience() {
       const audio = audioRef.current;
       if (!audio || !song.previewUrl) return;
 
-      if (playingId === song.id && !audio.paused) {
+      if (playingIdRef.current === song.id && !audio.paused) {
         audio.pause();
         return;
       }
@@ -516,13 +797,16 @@ export function JukeboxExperience() {
         setPlayingId(null);
       }
     },
-    [playingId],
+    [],
   );
+  toggleSongRef.current = toggleSong;
 
   const chooseRandom = useCallback(() => {
     if (!songs.length || phase === "landing") return;
     const pool = songs.filter((song) => song.id !== selectedSong?.id);
     const song = pool[Math.floor(Math.random() * pool.length)] ?? songs[0];
+    const match = closestCard(cardsRef.current, song.id, null);
+    selectedInstanceRef.current = match?.instanceIndex ?? null;
     setPhase("landing");
     setSelectedId(song.id);
     setSelectedSong(song);
@@ -535,6 +819,7 @@ export function JukeboxExperience() {
     setPhase("idle");
     setSelectedId(null);
     setSelectedSong(null);
+    selectedInstanceRef.current = null;
     sceneApiRef.current?.reset();
   }, []);
 

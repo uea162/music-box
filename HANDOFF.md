@@ -2,9 +2,9 @@
 
 ## 0. 接力结论
 
-当前首页已经是一个可运行的 Next.js 15 + Three.js 音乐墙原型。最近一轮修改没有重写结构，而是在现有 `JukeboxExperience` 内把卡片改为更大、更圆、数量更少的 3D 圆柱墙，并保留自动横向流动、拖拽、视差、点击试听、随机选歌和固定 HUD。
+当前首页已经是一个可运行的 Next.js 15 + Three.js 音乐墙原型。卡片墙已按 `docs/REFERENCE-LAYOUT.md`（QA 实测的参考站点规格）改成球面墙：15 列固定宽度，每列各自上下循环移动，竖直拖拽带动所有列，快速甩动有惯性；保留视差、点击试听、随机选歌和固定 HUD。
 
-桌面端在 1440×900 的实测结果为：中心卡片约 225px 宽，明显圆角，约三行大卡可见，中央清晰、两侧缩小变暗并后退。歌曲播放时浏览器采样约 120fps（测试机器为高刷新率设备），控制台无错误。本地验证必须按顺序执行，不要并行：
+1440×900、开启“减少动态效果”时，投影后的每张卡与 `docs/reference-layout/layout_sim.py` 的预测相差不到 0.1px，中心卡 x 范围约 601–839。本地验证必须按顺序执行，不要并行：
 
 ```powershell
 npm run lint
@@ -25,10 +25,10 @@ lint、生产构建与 TypeScript 检查均通过。
 目标是在不重写业务和 UI 的前提下，复刻参考站点 `https://www.bubbbly.com/jukebox` 的核心视觉体验：
 
 - 全屏暗色音乐卡片墙。
-- 卡片排列在大型圆柱形或弧形 3D 墙面上，而不是平面 grid。
-- 中央卡片正对用户、最大、最亮；两侧卡片逐渐旋转、缩小、变暗并退入纵深。
-- 卡片墙缓慢、连续、电影感地横向流动，并能在两端无缝循环。
-- 每列上下错落，保留轻量 masonry 感。
+- 卡片贴在球面前半部分上，用透视相机观察，而不是平面 grid。
+- 中央卡片正对用户、最大、最亮；越往四周越窄越矮、越暗。
+- 每列各自缓慢上下循环移动（偶数列向上、奇数列向下），墙体水平方向可以拖动并无缝循环。
+- 每列上下错落，宽列里每隔两槽出现一对并排半宽卡。
 - 点击卡片显示白色圆角选中边框并播放 iTunes 试听。
 - UI 层固定在 viewport：`Music Box` 标题、右上计数、底部 `Let the room choose` 控制面板不随墙体移动。
 - 保留鼠标拖拽、滚轮、轻微 parallax 和 `prefers-reduced-motion`。
@@ -39,13 +39,12 @@ lint、生产构建与 TypeScript 检查均通过。
 已完成：
 
 - Next.js 首页、全屏 WebGL canvas 和固定 UI 层。
-- Three.js 圆柱墙坐标映射。
-- requestAnimationFrame 驱动的自动横向流动。
-- 水平按列无缝 `wrap`，垂直按每列高度独立 `wrap`。
-- shortest-column masonry 分配和轻微卡片高度差。
-- 中心距离驱动的 `scale / opacity / brightness / rotateY / translateZ`。
+- 球面墙：顶点着色器把每张卡的 10×14 网格弯到球面上，按朝向逐像素压暗。
+- 每列独立的自动上下移动，开场从 16 倍速逐渐降到正常速度；所有运动共用一个目标速度。
+- 水平按墙宽无缝 `wrap`，垂直按每列一圈长度独立 `wrap`。
+- 最短列优先排放、宽列并排半宽卡、按屏高补足每列长度。
 - 鼠标轻微 parallax。
-- 指针拖拽、滚轮浏览和 Raycaster 点击。
+- 指针拖拽（所有列一起动）、甩动惯性、滚轮浏览，以及在球面上解析求交的点击命中。
 - CanvasTexture 卡片绘制，包含封面、标题、歌手、进度条、播放状态。
 - 大圆角透明裁切、圆角白色选中框。
 - 单一 `<audio>` 试听播放器。
@@ -58,37 +57,43 @@ lint、生产构建与 TypeScript 检查均通过。
 ### 1.3 尚未完成或未充分验证
 
 - 最新“大卡片”参数只重点验证了 1440×900 桌面视口；移动端和平板端尚未完成视觉回归。
-- 尚未等待完整水平循环周期验证接缝。当前桌面一圈约 214 秒；短时自动移动已验证，数学 wrap 已实现。
-- 放大卡片后，“Pick one record” 的 `targetScale = 1.38` 桌面聚焦效果尚未重新视觉验证，可能过度放大。
-- 浏览器跨断点 resize 不会重新创建卡片数量；场景只在歌曲列表变化时重建。
+- 墙体不再自动横移，水平接缝只能靠拖拽经过；数学 wrap 已实现，未在真机上拖满一整圈看过。
+- 放大卡片后，“Pick one record” 的 `FOCUS_SCALE_WIDE = 1.38` 桌面聚焦效果尚未在真机上视觉验证，可能过度放大。
 - 没有 WebGL 不可用时的 2D fallback。
 - 天气、地区、图片分析、规则推荐与 AI 推荐尚未实现；目前按钮是随机选歌。
 - 没有自动化单元测试、视觉回归测试或端到端测试文件。
-- Safari、低端移动设备、触摸惯性、完整 reduced-motion 模式尚未验证。
+- Safari、低端移动设备和真机触摸惯性尚未验证。reduced-motion 只在无头 Chromium 里验证过（含实时切换）。
 
 ---
 
 ## 2. 已修改文件
 
-### 2.1 最新一轮视觉修改
+### 2.1 最新一轮修改：球面墙与统一目标速度
 
 #### `src/components/jukebox/JukeboxExperience.tsx`
 
 本轮的主要修改文件，也是当前关键逻辑所在：
 
-- 卡片世界尺寸从小卡调整为 `1.65 × 2.34`。
-- 横纵 gap 调整为 `0.22 / 0.22`。
-- 相机调整为 `PerspectiveCamera(48)`，`z = 7.4`，使桌面中心卡约 225px。
-- 桌面布局从 16×6 降为 12×5；平板 9×6；移动 6×7。
-- 外层卡片使用 Canvas 透明圆角裁切，圆角 46 canvas px。
-- 封面圆角改为 34 canvas px。
-- 选中框改为圆角白框，半径 40 canvas px。
-- 材质启用 `alphaTest: 0.01` 与 `depthWrite: true`，减少透明卡片叠加发灰。
-- 高度差缩小到 `0.94–1.04`，减少过乱的尺寸变化。
-- 强化边缘卡片的 scale、brightness、opacity、rotateY 和负 Z。
-- 优化 `refreshCards`：仅当播放、选中或进度状态变化时重画对应 CanvasTexture，修复播放时掉帧。
+- 圆柱墙整体换成 `docs/REFERENCE-LAYOUT.md` 描述的球面墙。所有可调数值都是文件顶部的具名常量，注释里标了对应的规格章节。
+- 布局：15 个固定宽度的列，固定种子洗牌后逐首放进当前最短的列；宽度 ≥ 200 的列在第 2、5、8… 槽放两张并排半宽卡；每列不足 1.5 屏高时用本列自己的歌循环补槽，相邻不重复。
+- 投影：卡片网格 `PlaneGeometry(1, 1, 10, 14)` 由顶点着色器弯到球面上；相机按视口计算距离和视场角，使 z = 0 平面上 1 个世界单位等于 1 屏幕 px。朝向压暗在片元着色器里逐像素做。
+- 运动：每列 `offset = 300 + 137·i ± speed_i·D + scroll_i`。`D` 是统一速度倍率对时间的积分；倍率只向一个目标速度逼近，播放、按住、惯性、聚焦、减少动态效果都只是让目标变成 0。开场倍率从 16 开始，以 1.6/s 逼近 1。
+- 拖拽与惯性：`DRAG_SCOPE = "all-columns"`，竖直拖拽让所有列一起移动；松手前停顿超过 80 ms 速度清零，否则按 3.5/s 衰减滑行，低于 4 单位/秒停下。
+- 缩放：尺寸入口只有一个，`ResizeObserver` 观察 canvas。每次尺寸变化都连续重算比例和相机；只有补槽数量变化时才重排卡片，而且复用已有网格和材质，不重建场景、不重画纹理、不重新请求封面。
+- 纹理：每首歌一张共享纹理，另加一张给唯一的选中/播放卡。白框只画在这张上，墙上最多一张白框。
+- 重排后：原选中卡还在就保留；不在了就换成离屏幕中心最近的同歌副本。聚焦状态下重新执行 focus；否则选中卡只要被屏幕边缘切到一点，就移回屏幕中心。
+- 暂停时立即清空 `playingId`，墙体不用等 `pause` 事件就开始恢复移动。
 
-关键逻辑：`drawCard`、Three.js 初始化 effect、`animate`、`refreshCards`。
+#### `src/app/globals.css`
+
+- `.result-panel` 的 `left` 改为 `min(calc(50% + 205px), calc(100% - 面板宽 - 21px))`。宽屏仍在聚焦卡右侧；约 1232px 以下贴着右边留 21px，821–1189 宽时整块面板和按钮都在屏幕内。
+
+#### 文档
+
+- 新增 `docs/REFERENCE-LAYOUT.md`、`docs/reference-layout/README.md`、`docs/reference-layout/layout_sim.py`（QA 提供的参考规格和模拟脚本，数值以它为准）。
+- `docs/ACCEPTANCE.md` 新增 S、S-RM、F7、F8，并改了已经过时的 V1、V8、R3、L2、M6。
+
+关键逻辑：文件顶部常量、`buildBaseColumns` / `extendColumns`、场景 effect 里的 `stepMotion`、`placeCards`、`relayout`、`applyViewport`、`settleViewport`，以及 `refreshCards`。`drawCard` 本轮未改。
 
 ### 2.2 本项目此前已创建或修改的文件
 
@@ -158,79 +163,80 @@ React 管理低频业务状态：歌曲列表、加载阶段、选中歌曲、�
 
 ### 3.2 3D 卡片墙
 
-实现文件：`src/components/jukebox/JukeboxExperience.tsx`。
+实现文件：`src/components/jukebox/JukeboxExperience.tsx`。规则来源：`docs/REFERENCE-LAYOUT.md`。
 
-- 每张卡由一个离屏 `canvas` 绘制为 `THREE.CanvasTexture`。
-- 所有卡共享一个 `PlaneGeometry(CARD_WIDTH, CARD_HEIGHT)`，每张卡各有 `MeshBasicMaterial`。
-- `wallSongs` 保证至少覆盖当前断点需要的 `columns × rows`。歌曲不足时克隆视觉实例，并给实例 ID 加 `-wall-${index}`，防止一个歌曲的多个视觉实例同时出现选中态。
-- 卡片使用 shortest-column 算法分配到当前最短列，形成轻量 masonry。
-- 每列保存独立 `columnSpan`，垂直位置通过 `wrap(baseY + current.y, columnSpan)` 循环。
-- 水平位置通过 `wrap(baseX + current.x + autoOffset, wallSpan)` 循环，`wallSpan = columns × horizontalPitch`。
-- 圆柱映射：
+- 墙面单位与屏幕 px 的换算：`scale = max(vw / 1500, 0.36)`。
+- 列：`COLUMN_WIDTHS` 共 15 列，列间距 14，墙宽 3090。卡片高 = 宽 × 1.44。
+- 排放：`SHUFFLE_SEED` 固定种子洗牌（线性同余 + Fisher–Yates），然后每首放进一圈最短的列（并列取序号小的）。宽列下标 `% 3 == 1` 的槽放两张半宽卡，宽 `(W − 14) / 2`。
+- 补足：`extendColumns` 让每列一圈长度 ≥ `1.5 · vh / scale`，只用本列自己的歌、只在末尾追加，所以已有槽的歌和位置不变。
+- 实例编号：`instanceIndex = (列 × 4096 + 槽) × 2 + 左右`，同一槽的编号在重排前后不变。
+- 水平：列相对视角的距离 `wrap` 到 `[-墙宽/2, 墙宽/2)`；首屏第 7 列（250 宽）居中。
+- 竖直：每列按自己的一圈长度 `wrap`。
+- 球面：`R = 1.2 · hypot(vw, vh) / 2 / scale`，`eye = 3.2 · hypot / 2`，`fov = 2·atan(vh / 2 / eye)`。顶点着色器：
 
-```ts
-theta = flatX / CYLINDER_RADIUS
-cylinderX = sin(theta) * CYLINDER_RADIUS
-cylinderZ = (cos(theta) - 1) * CYLINDER_RADIUS
+```glsl
+a = turn + u * w / R;  b = tilt + v * h / R;
+X = S*cos(b)*sin(a);  Y = -S*sin(b);  Z = S*(cos(a)*cos(b) - 1);
 ```
+
+- 剔除：`|turn|` 或 `|tilt|` 大于 1.35、朝向低于 `M = S/(eye+S) − 0.04`、或投影偏移超过 `0.62·视口 + 卡片尺寸` 时不画。
+- 明暗：`mix(0.3, 1, smoothstep(M, M + 0.5, cos a · cos b))`。
+- 点击：把屏幕射线和球面解析求交，换算成 (turn, tilt) 后判断落在哪张卡的角度范围内，不用 Raycaster。
 
 ### 3.3 动画逻辑
 
-主循环使用 `requestAnimationFrame`，按实际 delta time 更新：
+一个 `requestAnimationFrame` 循环，每帧 `dt = min(帧间隔, 50 ms)`，顺序是 `stepMotion → 视差/缩放 → placeCards → syncActiveFace → render`。
 
-- delta 最大限制 0.05 秒，避免切回页面时发生大跳跃。
-- 自动横移：`autoOffset += delta * speed`，然后 wrap。
-- 拖拽时速度降到普通速度的约四分之一，而不是完全停止。
-- 拖拽目标使用 `current.lerp(target, 1 - exp(-delta * 7.5))` 平滑跟随。
-- parallax 使用 `1 - exp(-delta * 2.8)` 平滑跟随鼠标。
-- 聚焦 scale 使用 `1 - exp(-delta * 5)`。
-- 没有 bounce、spring 或 overshoot。
-- `prefers-reduced-motion` 时关闭自动横移和 parallax，但拖拽仍可用。
+- **统一目标速度**：`resolveTargetSpeed()` 是唯一决定目标的地方。减少动态效果、按住、惯性滑行中、正在播放、聚焦中，任一成立时为 0，否则为 1。
+- **倍率**：`speed += (target − speed)·(1 − exp(−dt·k))`，目标为 0 时 `k = 6`（约 300 ms 停住），目标为 1 时 `k = 1.6`。开场把 `speed` 设为 16，于是开场曲线就是 `1 + 15·exp(−1.6·t)`，没有另一套缓动。
+- **偏移**：`columnOffset(i) = 300 + 137·i + dir_i·COLUMN_SPEEDS[i]·D + scroll[i]`，偶数列 `dir = +1`（卡片向上）。
+- **输入**：拖拽、滚轮、惯性、聚焦滑动都只调 `nudge()` 累加到待处理量，由 `stepMotion` 在同一处写入 `pan` / `scroll`。拖拽换算 `1 px = 1 / (scale × 聚焦缩放)` 单位，所以跟手。
+- **惯性**：松手时取最近 100 ms 的平均速度；最后一次移动距松手超过 80 ms 则为 0。`v ← v·exp(−3.5·dt)`，低于 4 单位/秒停止。按下时清零。
+- **减少动态效果**：`matchMedia` 的 `change` 监听实时生效。开启时倍率立即归零、惯性清零、视差归零，聚焦直接跳到位；关闭时倍率从 0 以 1.6/s 恢复，不重放开场。
+- **视差**：墙体整体平移最多 ±10 / ±6 px，按住拖拽时冻结，保证拖拽 1:1。
+- **聚焦**：`focus(songId)` 选离屏幕中心最近的副本，以 7.5/s 把它滑到中心；缩放目标 820 以下 1.1、以上 1.38，以 5/s 逼近。
 
 ### 3.4 当前完整视觉参数
 
-除 vignette 外，下列参数均定义在 `src/components/jukebox/JukeboxExperience.tsx`。
+除背景和 vignette 外，下列参数都是 `JukeboxExperience.tsx` 顶部的具名常量。
 
-| 参数 | 当前值 | 定义和作用 |
+| 常量 | 值 | 作用 |
 | --- | --- | --- |
-| card width | `CARD_WIDTH = 1.65` world units | 文件顶部；1440×900 中心卡约 225px |
-| card height | `CARD_HEIGHT = 2.34` world units | 文件顶部；保持 420×604 纹理比例 |
-| horizontal gap | `CARD_GAP_X = 0.22` | 文件顶部；`horizontalPitch = width + gap` |
-| vertical gap | `CARD_GAP_Y = 0.22` | shortest-column 累计高度 |
-| card height variation | `0.94 + (seed % 5) * 0.025` | 范围 0.94–1.04，仅改变高度 |
-| outer border radius | `46` canvas px | `drawCard` 外层 `roundRect`；桌面约 25px |
-| artwork radius | `34` canvas px | `drawCard` 封面 `roundRect`；桌面约 18px |
-| selected border radius | `40` canvas px | 白色选中框 |
-| selected border | `11` canvas px，`#fff` | 阴影 blur 14，alpha 0.38 |
-| texture size | `420 × 604` | 每张离屏 canvas |
-| perspective/FOV | `48°` | `new PerspectiveCamera(48, 1, 0.1, 100)` |
-| camera Z | `7.4` | 决定中心卡的屏幕尺寸 |
-| cylinder radius | `15` | 文件顶部 `CYLINDER_RADIUS` |
-| desktop grid budget | `12 columns × 5 rows` | `innerWidth >= 1180` |
-| tablet budget | `9 × 6` | `720 <= innerWidth < 1180` |
-| mobile budget | `6 × 7` | `innerWidth < 720` |
-| center distance | `abs(flatX) / (wallSpan * 0.5)` | clamp 到 0–1 |
-| depth curve | `centerDistance ^ 1.25` | 所有景深变化的统一输入 |
-| scale | `1 - depthCurve * 0.22` | 中心 1，最边缘 0.78 |
-| opacity | `1 - depthCurve * 0.58` | 中心 1，最边缘 0.42 |
-| brightness | `1 - depthCurve * 0.48` | 通过材质 color scalar；边缘 0.52 |
-| rotateY | `-theta * (0.96 + depthCurve * 0.24)` | 越靠边旋转越明显 |
-| translateZ | `cylinderZ - depthCurve * 1.35 - 0.008 * y²` | 圆柱深度 + 额外边缘后退 + 轻微纵向弯曲 |
-| rotateX | `y * 0.006` | 极轻微纵向弧度 |
-| selected lift | `+0.28 Z` | 选中卡前移 |
-| selected scale | `1.035` | 选中卡轻微放大 |
-| wall speed | `0.105 world units/s` | 自动移动；拖拽时 `0.025` |
-| horizontal drag | `dx * 0.008` | 指针拖拽 |
-| vertical drag | `-dy * 0.008` | 指针拖拽 |
-| wheel X | `-deltaX * 0.0025` | 触控板横向 |
-| wheel Y | `deltaY * 0.0042` | 滚轮纵向 |
-| parallax rotateX | `-pointerY * 0.014 rad` | group 级别 |
-| parallax rotateY | `pointerX * 0.022 rad` | group 级别 |
-| parallax translateX | `pointerX * 0.07` | group 级别 |
-| parallax translateY | `-pointerY * 0.045` | group 级别 |
-| renderer pixel ratio | `min(devicePixelRatio, 1.6)` | 控制 GPU 压力 |
-| material alpha test | `0.01` | 丢弃透明圆角像素 |
-| material depth write | `true` | 减少多层半透明叠加 |
+| `COLUMN_WIDTHS` | `150, 200, 165, 215, 175, 225, 190, 250, 185, 230, 170, 210, 160, 205, 150` | 15 列宽度（墙面单位） |
+| `CARD_ASPECT` | `1.44` | 卡片高 / 宽 |
+| `WALL_GAP` | `14` | 列间、槽间、并排卡之间的间距 |
+| `PAIR_MIN_COLUMN_WIDTH` / `PAIR_SLOT_EVERY` / `PAIR_SLOT_PHASE` | `200` / `3` / `1` | 并排半宽卡规则 |
+| `SHUFFLE_SEED` | `20260921` | 洗牌种子，只影响歌落在哪 |
+| `CENTER_COLUMN` | `7` | 首屏居中的列 |
+| `MIN_LOOP_SCREENS` | `1.5` | 每列一圈至少几个屏高 |
+| `MAX_SLOTS_PER_COLUMN` | `4096` | 补槽上限，也用于实例编号 |
+| `START_OFFSET_BASE` / `START_OFFSET_STEP` | `300` / `137` | 各列初始错位 |
+| `COLUMN_SPEEDS` | `19, 27, 16, 24, 21, 29, 17, 25, 20, 23, 18, 26, 22, 28, 19` | 各列 1× 速度（单位/秒） |
+| `RUNNING_SPEED` / `STOPPED_SPEED` | `1` / `0` | 目标速度的两个取值 |
+| `INTRO_SPEED` | `16` | 开场初始倍率 |
+| `SPEED_EASE_TO_RUN` / `SPEED_EASE_TO_STOP` | `1.6` / `6` /s | 倍率逼近目标的速率 |
+| `MAX_FRAME_SECONDS` | `0.05` | 每帧 dt 上限 |
+| `DRAG_SCOPE` | `"all-columns"` | 竖直拖拽作用于所有列（可选 `"pressed-column"`） |
+| `CLICK_MOVE_TOLERANCE_PX` | `7` | 移动小于它算点击 |
+| `INERTIA_DECAY` | `3.5` /s | 惯性衰减 |
+| `INERTIA_STOP_SPEED` | `4` 单位/秒 | 惯性停止阈值 |
+| `INERTIA_IDLE_RESET_MS` | `80` | 松手前静止超过它则不滑行 |
+| `INERTIA_SAMPLE_WINDOW_MS` | `100` | 松手速度的取样窗口 |
+| `DESIGN_WIDTH` / `MIN_SCALE` | `1500` / `0.36` | 屏幕缩放 |
+| `SPHERE_RADIUS_FACTOR` / `EYE_DISTANCE_FACTOR` | `1.2` / `3.2` | 球半径、相机距离（乘半对角线） |
+| `HORIZON_BIAS` | `0.04` | 背面阈值 `M` 的偏移 |
+| `MAX_CARD_ANGLE` / `CULL_MARGIN` | `1.35` / `0.62` | 剔除 |
+| `CARD_SEGMENTS_X` / `CARD_SEGMENTS_Y` | `10` / `14` | 卡片网格细分 |
+| `SHADE_FLOOR` / `SHADE_SPAN` | `0.3` / `0.5` | 明暗衰减 |
+| `ALPHA_CUTOFF` | `0.01` | 丢弃透明圆角像素 |
+| `FOCUS_SCALE_WIDE` / `FOCUS_SCALE_COMPACT` / `COMPACT_FOCUS_BELOW_WIDTH` | `1.38` / `1.1` / `820` | 聚焦缩放 |
+| `FOCUS_GLIDE_RATE` / `FOCUS_SETTLED_UNITS` / `FOCUS_SCALE_RATE` | `7.5` /s / `0.5` / `5` /s | 聚焦滑动与缩放 |
+| `PARALLAX_SHIFT_X_PX` / `PARALLAX_SHIFT_Y_PX` / `PARALLAX_RATE` | `10` / `6` / `2.8` /s | 视差 |
+| `RESIZE_SETTLE_MS` | `150` | 缩放停止后多久做重新聚焦 / 重新居中 |
+| `CARD_TEXTURE_WIDTH` / `CARD_TEXTURE_HEIGHT` | `420` / `604` | 每张卡片纹理 |
+| `MAX_PIXEL_RATIO` | `1.6` | renderer 像素比上限 |
+
+卡片绘制（`drawCard` 里的圆角 46、封面圆角 34、白框 11 px 等）本轮没有改。
 
 页面底色是 `#0c090e`。紫色径向光在 `.jukebox-shell` 上，数值来自参考站：
 
@@ -253,7 +259,7 @@ radial-gradient(
 
 ### 3.5 为什么采用当前方案
 
-- 使用 Three.js 而不是 DOM grid，是因为需要统一的圆柱映射、真实 perspective、Raycaster 和大量卡片高频运动。
+- 使用 Three.js 而不是 DOM grid，是因为需要统一的球面映射、真实 perspective 和大量卡片高频运动。
 - 使用 CanvasTexture，而不是每张卡一个复杂 DOM，是为了避免几十个 DOM 卡片每帧参与布局与合成。
 - React 和 Three.js 状态分离，避免墙体每帧运动触发 React render。
 - 使用 wrap 后复用同一批 mesh，形成无限墙，不持续创建和销毁卡片。
@@ -286,30 +292,26 @@ getComputedStyle(document.documentElement).getPropertyValue("--font-ui")
 
 ### 4.1 已知问题和潜在 bug
 
-1. **跨响应式断点 resize 不会重排卡片。**
-   - `columns` 和 `rows` 只在 Three.js effect 创建时读取一次。
-   - `resize` 只更新 renderer 和 camera aspect。
-   - 从桌面缩到手机或反向缩放时仍沿用旧列数，必须刷新页面才会使用新断点。
-
-2. **Raycaster 仍按矩形 Plane 命中。**
-   - 卡片纹理角落是透明圆角，但几何体仍为矩形。
+1. **点击命中仍按矩形判断。**
+   - 球面上的命中是按卡片的角度矩形算的，卡片纹理角落是透明圆角。
    - 点击透明圆角区域理论上仍可能选中卡片。
 
-3. **放大卡片后的随机聚焦可能过度。**
-   - 桌面 `targetScale = 1.38` 是小卡片时期留下的值。
-   - 最新参数下尚未重新检查完整 `landing -> reveal -> reset` 流程。
+2. **放大卡片后的随机聚焦可能过度。**
+   - 桌面 `FOCUS_SCALE_WIDE = 1.38` 是小卡片时期留下的值，球面墙下尚未在真机上视觉确认。
+
+3. **宽屏上结果面板可能盖住聚焦卡的一部分。**
+   - 1232px 以下面板改为贴右边，821 宽时聚焦卡右半边会在面板下面。面板下有模糊遮罩，影响不大，但尚未和设计确认。
 
 4. **外部曲库失败时重复卡明显。**
-   - fallback 只有 18 首，视觉实例会重复到至少 60 张桌面卡。
+   - fallback 只有 18 首，15 列每列只分到 1–2 首，补足到 1.5 屏高后同一列几乎全是同一首歌。
    - 功能稳定，但封面和标题重复会降低高级感。
 
 5. **透明材质和 depth write 的极端角度风险。**
    - 当前桌面截图没有明显排序错误。
    - 但透明材质开启 depth write 在卡片极度交叉时可能出现遮挡不符合预期，需要在移动端和拖拽极限位置验证。
 
-6. **选中卡会继续随自动墙移动。**
-   - 普通点击试听后，选中卡不会锁在中心。
-   - 这是当前环境式设计的一部分，但如果产品期望持续强调选中卡，需要定义暂停或跟随策略。
+6. **暂停后选中卡会随墙移走。**
+   - 播放时各列停止，暂停后恢复移动，选中卡会慢慢移出屏幕。这与参考站点一致。
 
 7. **source note 在 fallback 时仍写 iTunes previews。**
    - Dock 会显示 `Offline study catalog`，但右下角 source note 文案是固定的。
@@ -317,25 +319,24 @@ getComputedStyle(document.documentElement).getPropertyValue("--font-ui")
 ### 4.2 视觉上仍可能需要调整
 
 - 左侧标题与大卡会发生明显叠压；这与参考风格一致，但最终暗度和遮挡程度仍需用户主观确认。
-- 现在中心卡约 225px，符合范围下沿。如果希望更接近 240–250px，优先微调 camera Z 或 FOV，不要同时放大 geometry 和缩相机。
+- 1440 宽时中心卡（250 列）约 239px。卡片尺寸由 `scale` 和球面参数决定，要改先改 `docs/REFERENCE-LAYOUT.md` 再改常量。
 - 中央卡约三行可见，底部 dock 会覆盖部分卡片；当前是预期的 UI 分层，但尚未在所有高度验证。
-- 边缘卡当前最小 scale 0.78、opacity 0.42、brightness 0.52。若仍显拥挤，优先降低边缘 opacity 或减少桌面列数，不要重新引入整体 fishScale。
+- 边缘卡的压缩和变暗完全来自球面投影和 `SHADE_FLOOR / SHADE_SPAN`，不要再叠加额外的 scale / opacity 曲线。
 
 ### 4.3 性能现状
 
 - 修复前，播放歌曲后 `refreshCards` 每次进度更新会重画所有卡片，实测一度约 5.94fps。
 - 已改为比较 `visualState`，只重画变化卡片；播放状态下复测约 120fps。
 - 该数字来自 Codex in-app Chromium、1440×900、高刷新率机器，不等于低端设备保证。
-- 每张纹理为 420×604 RGBA；桌面通常 60 张视觉实例，GPU/Canvas 内存仍需移动端 profile。
+- 每张纹理为 420×604 RGBA，数量为“歌曲数 + 1”，与墙上的实例数无关（54 首时 55 张）。390×844 下墙上约 250 个实例，都共用这些纹理。移动端 GPU 内存仍需 profile。
 - 页面隐藏时没有显式暂停 Three.js render loop。浏览器通常会节流，但代码没有 `visibilitychange` 控制。
 
 ### 4.4 尚未验证
 
-- 360–430px 手机视口的最新大卡参数。
-- 768–1024px 平板视口。
+- 真机上的 360–430px 手机和 768–1024px 平板视觉（无头 Chromium 下已和模拟脚本对照）。
 - 低端 Android 和 iOS Safari。
-- 完整约 214 秒水平循环接缝。
-- `prefers-reduced-motion` 实际视觉。
+- 真机 60Hz 下开场曲线的速率 k（规格里标注 ±15% 不确定）。
+- 横向拖满一整圈的接缝。
 - WebGL context lost/recovery。
 - iTunes CORS、封面加载失败和试听 URL 失效的完整错误 UI。
 - 键盘操作；Canvas 卡片目前主要依赖指针。
@@ -347,7 +348,7 @@ getComputedStyle(document.documentElement).getPropertyValue("--font-ui")
 1. **中心径向放大式鱼眼。**
    - 早期使用 `radialDistance`、`centerLift` 和 `fishScale`，同时按 x/y 距离放大中心卡。
    - 结果像中间鼓起的一团，而不是连续圆柱墙；放大后还会覆盖相邻卡片。
-   - 已替换为圆柱坐标 + 距离驱动景深。
+   - 后来改为圆柱坐标 + 距离驱动景深，现已换成球面墙（见 3.2）。
 
 2. **半径 7.15 的强弯曲圆柱。**
    - 边缘卡被过度压缩到中间，左右出现空边。
@@ -388,15 +389,13 @@ getComputedStyle(document.documentElement).getPropertyValue("--font-ui")
 
 #### P0.3 验证完整无缝循环
 
-- **改哪里：** `animate` 中 `flatX = wrap(...)` 及 `wallSpan`。
-- **预期结果：** 最后一列离开一侧时，第一列从另一侧连续进入，没有空洞、抖动或列间距突变。
-- **建议方法：** 开发时临时把 speed 提高到 1–2 units/s 或通过 DevTools 注入调试参数观察一整圈，确认后恢复 `0.105`。不要将调试速度提交为正式参数。
+- **改哪里：** `placeCards` 中列的水平 `wrap(column.x - viewX, wallWidth)`，以及每列竖直 `wrap(..., column.length)`。
+- **预期结果：** 横向拖过接缝、纵向滚过每列循环点时没有空洞、抖动或间距突变。
+- **建议方法：** 墙体不再自动横移，用拖拽或滚轮横向走一整圈（3090 单位）。不要提交任何调试调速开关。
 
-#### P0.4 修复跨断点 resize 不重排
+#### ~~P0.4 修复跨断点 resize 不重排~~ ✅ 已完成
 
-- **改哪里：** Three.js 场景 effect 和 resize 管理。
-- **预期结果：** 窗口跨过 720/1180px 后列数和行数正确重建，不需要刷新页面。
-- **建议方法：** 最小方案是在 React 中维护 breakpoint key，并将其加入 effect 依赖；仅跨断点时重建场景，不要每次 resize 都重建纹理。
+- PR #5 先做了跨断点重建；本轮改成连续缩放：任何尺寸变化都只重算比例和相机，补槽数量变化时复用网格重排，不重建场景。验收见 `docs/ACCEPTANCE.md` 的 R1–R6、S10。
 
 ### P1 建议继续做
 
@@ -491,20 +490,21 @@ npm run typecheck
 
 桌面建议使用 1440×900：
 
-1. 页面加载后无需操作，卡片墙应缓慢持续横向移动。
-2. 中心卡片约 220–230px 宽，外圆角明显约 25px，封面圆角约 18px。
+1. 页面加载后无需操作，各列开场先快后慢，之后偶数列缓慢向上、奇数列缓慢向下，墙体不横移。
+2. 中心卡片（250 列）约 239px 宽，外圆角明显，封面圆角清楚。
 3. 中心卡片最大、最亮、最清晰。
-4. 左右卡片逐渐缩小、变暗、降低透明度、rotateY 增加并退到更负的 Z。
-5. 同屏约三行大卡，中央卡片之间有清楚间距，不应出现大片半透明重影。
+4. 越往四周卡片越窄越矮、越暗，像贴在球面上。
+5. 同屏约三行大卡，宽列里有并排半宽卡，不应出现大片半透明重影。
 6. 四周有椭圆形暗角，上下左右都压暗；暗角不能阻断鼠标事件。
 7. `Music Box`、右上计数和底部面板固定，不随卡片墙移动。标题下没有副标题。
 8. 鼠标缓慢移到四角，墙体有轻微 parallax，UI 不动，页面不应剧烈摇晃。
-9. 拖拽 canvas，卡片墙平滑跟随；松手后没有弹跳或 overshoot。
+9. 按住墙面所有列约 300 ms 内停住；竖直拖拽所有列一起跟手移动；快速甩动后滑行一小段，拖完停住再松手不滑行。
 10. 滚轮应纵向浏览各列，触控板横向手势可改变墙体位置。
-11. 点击中央卡片后出现粗白色圆角边框并播放试听；再次点击同一卡应暂停。
+11. 点击中央卡片后出现粗白色圆角边框并播放试听，墙体停住；再次点击同一卡应暂停，墙体恢复移动；再点从暂停处继续。
 12. 播放时进度条更新，动画不能明显掉帧。
-13. 点击 `Pick one record`，检查聚焦、结果面板和返回流程。
+13. 点击 `Pick one record`，检查聚焦、结果面板和返回流程；821、1000、1189 宽时面板完整可见。
 14. 控制台不应出现运行时 error。
+15. 开启“减少动态效果”，按 `docs/ACCEPTANCE.md` 的 S-RM 检查。
 
 性能验证建议：
 
@@ -545,7 +545,7 @@ npm run typecheck
 
 源码的核心仍集中于第 2、3 节所写的实现，主要是：
 
-- `JukeboxExperience.tsx`：3D 圆柱墙、自动循环、masonry、圆角卡片、景深、交互、试听和性能优化。
+- `JukeboxExperience.tsx`：球面墙布局与投影、各列自动移动、拖拽与惯性、圆角卡片纹理、交互、试听和性能优化。
 - `globals.css`：全屏暗色 UI、固定 vignette、标题、控制面板和响应式。
 - `api/catalog/route.ts`：iTunes 目录聚合与 fallback。
 
@@ -559,65 +559,72 @@ npm run typecheck
 
 ## 8. 给下一个 Agent 的注意事项
 
-1. **不要先重写组件或切换 React Three Fiber。**
-   - 当前 Three.js 原生实现已达到高帧率并通过视觉验证。
-   - 优先做参数微调和局部修复。
+1. **墙面布局和运动以 `docs/REFERENCE-LAYOUT.md` 为准。**
+   - 列宽、间距、并排规则、初始错位、各列速度、球面参数、拖拽和惯性数值都来自 QA 实测。
+   - 要改数值，先确认参考站点有变化并更新该文档，再改 `JukeboxExperience.tsx` 顶部对应的常量。用 `docs/reference-layout/layout_sim.py` 对照截图。
 
-2. **不要重新引入中心整体 fishScale。**
-   - 这会让卡片互相覆盖，并把圆柱墙变成中心鼓包。
-   - 当前景深必须继续以 `flatX -> theta -> cylinder position` 为基础。
+2. **所有可调数值都放在文件顶部的具名常量里。**
+   - 不要在函数里写裸数字。新增参数时同时更新第 3.4 节的表。
 
-3. **保留 UI 与墙体分层。**
-   - canvas 独立运动；标题、计数、dock 和 vignette 是固定 DOM 层。
-   - 不要把标题或控制面板放进 Three group。
+3. **只有一个目标速度。**
+   - 播放、按住、惯性、聚焦、减少动态效果只能通过 `resolveTargetSpeed()` 影响自动移动。
+   - 拖拽、滚轮、惯性、聚焦滑动只能调 `nudge()`，由 `stepMotion` 统一写入偏移。不要再加一套各自改偏移的逻辑。
+   - 开场加速就是倍率从 16 逼近 1，不要另写开场动画。
 
-4. **保留单一 audio 元素。**
-   - 不要为每张卡创建播放器。
+4. **竖直拖拽带动所有列（`DRAG_SCOPE = "all-columns"`）。**
+   - 这是 QA 在参考站点实测确认的，不要改成只拖按住的那一列。
 
-5. **保留纹理重绘短路。**
-   - `refreshCards` 的 `unchanged` 检查是关键性能修复。
-   - 删除后播放状态会重新出现严重掉帧。
+5. **减少动态效果必须实时生效。**
+   - 没有自动移动、没有开场加速、松手不滑行、拖拽仍 1:1、视差关闭；`matchMedia` 的 `change` 监听不能删。
 
-6. **构建和 typecheck 必须顺序执行。**
-   - 并行执行会与 `.next/types` 生成过程发生竞态。
+6. **缩放不重建场景。**
+   - 尺寸入口只有 canvas 上的一个 `ResizeObserver`。尺寸变化只重算比例和相机；补槽数量变化才 `relayout`，而且复用网格、材质和纹理。
+   - 不要为了断点重新创建纹理、重新请求封面或重新开场。
+   - 重排后选中卡和正在播放的歌不能丢，`<audio>` 不能重新开始。结果面板打开时要重新 focus；选中卡被边缘切到就移回中心。
 
-7. **注意 breakpoint 重建问题。**
-   - 这是当前最明确的结构性 bug，修复时避免每个 resize event 都销毁 60 张纹理。
+7. **保留 UI 与墙体分层。**
+   - canvas 独立运动；标题、计数、dock 和 vignette 是固定 DOM 层，不要放进 Three group。
+   - `.dock-anchor` 负责定位和居中，`motion.section.dock` 只做外观和纵向动画，不要给它加 CSS transform。
 
-8. **注意大卡后的聚焦 scale。**
-   - `1.38` 可能过大，是下一个最可能需要调整的视觉参数。
+8. **页面上只能有一个动画循环和一个 `<audio>`。**
+   - 不要为每张卡创建播放器，不要加第二个 rAF。
 
-9. **不要把用户参考素材加入网页或上传。**
-   - `resource/` 仅用于视觉对照。
+9. **卸载或重建时释放所有资源。**
+   - 取消 rAF，移除 pointer / wheel 监听、`matchMedia` 监听，断开 `ResizeObserver`，清掉定时器，dispose 几何体、所有材质和纹理，中止封面下载。
 
-10. **天气和地区是明确延后需求。**
-    - 当前优先级仍是音乐墙视觉与交互，不要未经用户确认扩大到定位、天气或图片上传。
+10. **纹理按歌共享，白框最多一张。**
+    - 每首歌一张纹理，另加一张给唯一的选中/播放卡；白框只能画在这张上。
+    - `refreshCards` 的 `unchanged` 短路必须保留，删掉后播放时会严重掉帧。
 
-11. **文档中的长期架构不是当前代码事实。**
+11. **调试挂钩只在开发模式、只读。**
+    - `window.__musicBoxDebug`（`memory()`、`activeLoops()`、`highlights()`、`cardPoints()`、`motion()`）只在 `process.env.NODE_ENV === "development"` 下挂载，生产构建里不能出现（`grep -R __musicBoxDebug .next` 应无结果）。
+    - 不要加调速或任何写入型的调试开关。
+
+12. **构建和 typecheck 必须顺序执行。**
+    - 并行执行会与 `.next/types` 生成过程发生竞态。
+
+13. **`drawCard` 的卡片样式单独排期。**
+    - 参考规格第 9 节的卡片绘制还没做，不要顺手改。
+
+14. **不要切换 React Three Fiber，不要把用户参考素材加入网页或上传。**
+    - `resource/` 仅用于视觉对照。
+
+15. **天气和地区是明确延后需求。**
+    - 不要未经用户确认扩大到定位、天气或图片上传。
+
+16. **文档中的长期架构不是当前代码事实。**
     - `docs/ARCHITECTURE.md` 描述了未来的 engine/store/server 分层；当前核心仍在一个组件中。
-
-12. **当前最可能出问题的位置：**
-    - `JukeboxExperience.tsx` 的场景重建和 resize。
-    - 大卡片后的 `focus` scale。
-    - 透明材质在极端侧边的深度排序。
-    - 移动端纹理内存和可见卡数量。
-    - fallback 重复内容造成的视觉廉价感。
 
 ---
 
 ## 9. 最近一次验证记录
 
-- 日期：2026-09-27（Asia/Shanghai）。
-- 视口：1440×900。
-- 浏览器：Codex in-app Chromium。
-- iTunes live catalog：54 records in rotation。
-- 中心卡视觉宽度：约 225px。
-- 圆角选中框：已点击验证，白色圆角框与播放状态正常。
-- 自动横向移动：已观察多个时间点，持续平滑。
-- parallax：已移动指针验证，墙体轻微移动且 UI 固定。
-- 控制台 errors：0。
-- 播放状态性能：优化后两秒 rAF 采样约 120fps。
-- `npm run lint`：通过。
-- `npm run build`：通过。
-- `npm run typecheck`：通过。
-
+- 日期：2026-09-27。
+- 环境：无头 Chrome 148 + SwiftShader 软件渲染（没有硬件 GPU），帧率低且不稳定，时间常数类的观察只能看趋势。
+- 目录：拦截 `/api/catalog` 得到 54 首，带 wav 试听和 png 封面。
+- 布局：开启减少动态效果，1440×900、768×1024、390×844 三个视口下，每张可见卡的投影外接矩形与 `layout_sim.py --mode ours --songs 54` 相差 ≤ 0.09 px，可见列集合一致。1440 中心卡 x ≈ 600.7–839.3。
+- 运动：偶数列向上、奇数列向下，各列速率比例与 `COLUMN_SPEEDS` 一致；竖直拖 200 px 时 15 列都移动 200 px；快甩 30 px 后滑行约 80 px；停 120 ms 再松手速度为 0。
+- 减少动态效果：加载即静止、拖拽 1:1、甩动不滑行；实时关闭后倍率从 0 升到约 0.86（未超过 1），实时开启后立即归零。
+- 跨断点：播放中 1440→1000→390→1000→1440 来回 10 次，声音不断，白框 1 张、播放标记 1 张，选中卡始终完整在屏内；`memory()` 保持 1 个几何体、55 张贴图，`activeLoops()` 为 1，封面没有重新请求。
+- 结果面板：821、1000、1189、1440、390 宽时面板完整在屏内，“Back to the wall” 可点。
+- `npm ci`、`npm run lint`、`npm run build`、`npm run typecheck` 顺序执行通过；`grep -R __musicBoxDebug .next` 无结果。

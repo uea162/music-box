@@ -84,26 +84,30 @@ function interleaveUnique(groups: Song[][], limit: number): Song[] {
   return songs;
 }
 
+async function songsForTerm({ term, country }: SeedTerm): Promise<Song[]> {
+  try {
+    const params = new URLSearchParams({
+      term,
+      media: "music",
+      entity: "song",
+      country,
+      limit: "10",
+    });
+    const response = await fetch(`https://itunes.apple.com/search?${params}`, {
+      next: { revalidate: 60 * 60 * 6 },
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) return [];
+    const data = (await response.json()) as { results?: ITunesTrack[] };
+    return songsFromTracks(data.results ?? []);
+  } catch {
+    return [];
+  }
+}
+
 export async function GET() {
   try {
-    const groups = await Promise.all(
-      SEED_TERMS.map(async ({ term, country }) => {
-        const params = new URLSearchParams({
-          term,
-          media: "music",
-          entity: "song",
-          country,
-          limit: "10",
-        });
-        const response = await fetch(`https://itunes.apple.com/search?${params}`, {
-          next: { revalidate: 60 * 60 * 6 },
-          signal: AbortSignal.timeout(5_000),
-        });
-        if (!response.ok) return [];
-        const data = (await response.json()) as { results?: ITunesTrack[] };
-        return songsFromTracks(data.results ?? []);
-      }),
-    );
+    const groups = await Promise.all(SEED_TERMS.map((seed) => songsForTerm(seed)));
 
     const songs = interleaveUnique(groups, CATALOG_LIMIT);
 

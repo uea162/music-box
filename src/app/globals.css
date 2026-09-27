@@ -119,12 +119,11 @@ button {
   z-index: 12;
   left: 50%;
   bottom: clamp(18px, 4vw, 42px);
-  width: 376px;
+  width: min(376px, calc(100vw - 28px));
   transform: translateX(-50%);
 }
 
 .dock {
-  width: 100%;
   padding: 10px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 16px;

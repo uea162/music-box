@@ -147,7 +147,8 @@ src/app/page.tsx
     ├── div.corner-index          records in rotation
     ├── loading-copy
     ├── result-scrim/result-panel Framer Motion 结果层
-    ├── section.dock              Let the room choose
+    ├── div.dock-anchor           底部面板定位与居中（left / bottom / width / translateX）
+    │   └── motion.section.dock   面板外观与透明度、纵向动画，不加 CSS transform
     ├── source-note
     └── audio                     单一试听播放器
 ```

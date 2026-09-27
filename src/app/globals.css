@@ -142,14 +142,18 @@ button {
   box-shadow: 0 0 18px var(--ember);
 }
 
-.dock {
+.dock-anchor {
   position: absolute;
   z-index: 12;
   left: 50%;
   bottom: clamp(18px, 4vw, 42px);
   width: min(610px, calc(100vw - 28px));
-  padding: 18px 20px 16px;
   transform: translateX(-50%);
+}
+
+.dock {
+  width: 100%;
+  padding: 18px 20px 16px;
   border: 1px solid var(--line);
   border-radius: 3px;
   background: rgba(18, 10, 13, 0.76);

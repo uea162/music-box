@@ -45,7 +45,7 @@
 - 随机选歌、聚焦、结果面板和返回墙面流程。
 - 独立 vignette 层与噪点层。
 - 播放进度更新时只重绘状态变化的卡片，避免全量纹理重绘。
-- `npm run build` 和 `npm run typecheck` 通过。
+- `npm run lint`、`npm run build` 和 `npm run typecheck` 通过。
 
 ### 1.3 尚未完成或未充分验证
 
@@ -588,6 +588,7 @@ npm run typecheck
 - parallax：已移动指针验证，墙体轻微移动且 UI 固定。
 - 控制台 errors：0。
 - 播放状态性能：优化后两秒 rAF 采样约 120fps。
+- `npm run lint`：通过。
 - `npm run build`：通过。
 - `npm run typecheck`：通过。
 

@@ -4,7 +4,15 @@
 
 当前首页已经是一个可运行的 Next.js 15 + Three.js 音乐墙原型。最近一轮修改没有重写结构，而是在现有 `JukeboxExperience` 内把卡片改为更大、更圆、数量更少的 3D 圆柱墙，并保留自动横向流动、拖拽、视差、点击试听、随机选歌和固定 HUD。
 
-桌面端在 1440×900 的实测结果为：中心卡片约 225px 宽，明显圆角，约三行大卡可见，中央清晰、两侧缩小变暗并后退。歌曲播放时浏览器采样约 120fps（测试机器为高刷新率设备），控制台无错误。生产构建与 TypeScript 检查均通过。
+桌面端在 1440×900 的实测结果为：中心卡片约 225px 宽，明显圆角，约三行大卡可见，中央清晰、两侧缩小变暗并后退。歌曲播放时浏览器采样约 120fps（测试机器为高刷新率设备），控制台无错误。本地验证必须按顺序执行，不要并行：
+
+```powershell
+npm run lint
+npm run build
+npm run typecheck
+```
+
+lint、生产构建与 TypeScript 检查均通过。
 
 代码现已托管在 GitHub `uea162/music-box`。`main` 是事实来源；每个任务单独开分支并提交 Pull Request，不要直接推送到 `main`。接手后应先阅读本文件和 `src/components/jukebox/JukeboxExperience.tsx`。
 
@@ -43,7 +51,7 @@
 - 单一 `<audio>` 试听播放器。
 - `/api/catalog` iTunes 搜索聚合、去重与 fallback。
 - 随机选歌、聚焦、结果面板和返回墙面流程。
-- 独立 vignette 层与噪点层。
+- 独立 vignette 层。
 - 播放进度更新时只重绘状态变化的卡片，避免全量纹理重绘。
 - `npm run lint`、`npm run build` 和 `npm run typecheck` 通过。
 
@@ -87,8 +95,11 @@
 仓库现已托管在 GitHub `uea162/music-box`。首次提交之前的修改没有逐轮 Git 记录，因此无法从 Git 精确恢复“每一轮”的文件历史。以下是本次项目工作中已知创建或修改、且组成当前实现的文件：
 
 - `src/app/globals.css`
-  - 全屏 shell、暗色背景、独立 `.vignette`、噪点层、固定品牌区、右上计数、底部 dock、结果面板、响应式样式。
+  - 全屏 shell、暗色背景、独立 `.vignette`、固定品牌区、右上计数、底部 dock、结果面板、响应式样式。
   - 关键逻辑是 `.vignette { position: fixed; pointer-events: none; }`，以及各 UI 层高于 canvas 的 z-index。
+- `src/app/layout.tsx`
+  - 全局 metadata、`zh-CN` HTML 和全局 CSS。
+  - 用 `next/font/google` 引入 Instrument Serif 与 Bricolage Grotesque，并以 CSS 变量 `--font-display`、`--font-ui` 暴露。见 3.6。
 - `src/app/api/catalog/route.ts`
   - 服务器端并行请求 8 个 iTunes 搜索词，每个最多 10 首。原有 6 个艺人固定 `US` 商店；陳奕迅、方大同使用 `HK` 商店，以便返回繁体艺人名和可试听曲目。
   - 各词结果按搜索词轮询交错，并按 track id 去重，再截取最多 54 首，避免后加入的艺人被顺序截断丢掉。单个搜索词超时或失败只丢掉该词，其他词照常返回；合并后不足 12 首时才返回本地 fallback。
@@ -96,8 +107,6 @@
   - 服务器环境变量 `ITUNES_SEARCH_URL` 可覆盖 iTunes 搜索地址，不设置时默认为 `https://itunes.apple.com/search`。只在服务端读取，用于把目录请求指到本地假接口做失败和恢复测试；不要用 `NEXT_PUBLIC_` 前缀。
 - `src/app/page.tsx`
   - 首页仅渲染 `<JukeboxExperience />`。
-- `src/app/layout.tsx`
-  - 全局 metadata、`zh-CN` HTML 和全局 CSS。
 - `src/data/fallback-songs.ts`
   - 18 首离线占位歌曲及调色板；无试听 URL。
 - `src/types/song.ts`
@@ -139,7 +148,8 @@ src/app/page.tsx
     ├── div.corner-index          records in rotation
     ├── loading-copy
     ├── result-scrim/result-panel Framer Motion 结果层
-    ├── section.dock              Let the room choose
+    ├── div.dock-anchor           底部面板定位与居中（left / bottom / width / translateX）
+    │   └── motion.section.dock   面板外观与透明度、纵向动画，不加 CSS transform
     ├── source-note
     └── audio                     单一试听播放器
 ```
@@ -222,27 +232,24 @@ cylinderZ = (cos(theta) - 1) * CYLINDER_RADIUS
 | material alpha test | `0.01` | 丢弃透明圆角像素 |
 | material depth write | `true` | 减少多层半透明叠加 |
 
-Vignette 定义在 `src/app/globals.css` 的 `.vignette`：
+页面底色是 `#0c090e`。紫色径向光在 `.jukebox-shell` 上，数值来自参考站：
 
 ```css
-linear-gradient(
-  90deg,
-  rgba(4, 3, 4, 0.8) 0%,
-  rgba(4, 3, 4, 0.28) 10%,
-  transparent 25%,
-  transparent 75%,
-  rgba(4, 3, 4, 0.3) 90%,
-  rgba(4, 3, 4, 0.82) 100%
-),
+radial-gradient(60% 50% at 50% 45%, #2a1430 0%, #150d19 45%, #0c090e 100%)
+```
+
+Vignette 定义在 `src/app/globals.css` 的 `.vignette`，是一圈椭圆形暗角（上下左右一起压暗），同样照抄参考站：
+
+```css
 radial-gradient(
-  ellipse at center,
-  transparent 43%,
-  rgba(4, 3, 4, 0.06) 64%,
-  rgba(4, 3, 4, 0.56) 100%
+  72% 66% at 50% 48%,
+  transparent 38%,
+  rgba(12, 9, 14, 0.55) 68%,
+  rgba(12, 9, 14, 0.97) 96%
 )
 ```
 
-该层使用 `position: fixed; inset: 0; z-index: 5; pointer-events: none`。噪点层是 `.jukebox-shell::after`，opacity 为 0.14。
+该层使用 `position: fixed; inset: 0; z-index: 5; pointer-events: none`。原来的暖色噪点层已去掉。
 
 ### 3.5 为什么采用当前方案
 
@@ -252,6 +259,26 @@ radial-gradient(
 - 使用 wrap 后复用同一批 mesh，形成无限墙，不持续创建和销毁卡片。
 - 使用透明圆角纹理 + `alphaTest` + `depthWrite`，兼顾圆角和减少重叠发灰。
 - 使用指数形式、与 delta time 相关的 lerp，使不同刷新率下手感接近。
+
+### 3.6 字体
+
+网页层不再声明 Iowan Old Style 或 Avenir Next。字体由 `src/app/layout.tsx` 的 `next/font/google` 加载，并通过 `variable` 挂在 `<html>` 上：
+
+| CSS 变量 | 字体 | 用途 |
+| --- | --- | --- |
+| `--font-display` | Instrument Serif，字重 400 | 标题（`Music Box`、结果面板歌名） |
+| `--font-ui` | Bricolage Grotesque，字重 400 与 500 | 界面文字，包括按钮（字重 500） |
+
+`globals.css` 在变量后面接中文系统后备：`"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC"`。界面字体栈以 `sans-serif` 结尾，标题字体栈以 `serif` 结尾。
+
+后续如果要在 canvas 里画卡片文字，从这两个变量读取实际 family 名：
+
+```js
+getComputedStyle(document.documentElement).getPropertyValue("--font-display")
+getComputedStyle(document.documentElement).getPropertyValue("--font-ui")
+```
+
+`drawCard` 里目前仍写着 Avenir Next。那是卡片画图，不在这一批里改。
 
 ---
 
@@ -443,14 +470,15 @@ npm run dev -- -p 3002
 
 ### 6.2 编译和类型检查
 
-必须顺序运行，不要并行：
+必须按顺序运行，不要并行：
 
 ```powershell
+npm run lint
 npm run build
 npm run typecheck
 ```
 
-当前最后一次结果：两者均成功。
+当前最后一次结果：三者均成功。`build` 与 `typecheck` 不能并行，见 4.5 第 5 条。lint 放在它们前面，与 CI 的顺序一致。
 
 ### 6.3 当前没有的测试
 
@@ -468,8 +496,8 @@ npm run typecheck
 3. 中心卡片最大、最亮、最清晰。
 4. 左右卡片逐渐缩小、变暗、降低透明度、rotateY 增加并退到更负的 Z。
 5. 同屏约三行大卡，中央卡片之间有清楚间距，不应出现大片半透明重影。
-6. 四周有暗角，左右最暗；暗角不能阻断鼠标事件。
-7. `Music Box`、副标题、右上计数和底部面板固定，不随卡片墙移动。
+6. 四周有椭圆形暗角，上下左右都压暗；暗角不能阻断鼠标事件。
+7. `Music Box`、右上计数和底部面板固定，不随卡片墙移动。标题下没有副标题。
 8. 鼠标缓慢移到四角，墙体有轻微 parallax，UI 不动，页面不应剧烈摇晃。
 9. 拖拽 canvas，卡片墙平滑跟随；松手后没有弹跳或 overshoot。
 10. 滚轮应纵向浏览各列，触控板横向手势可改变墙体位置。

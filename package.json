@@ -27,5 +27,8 @@
     "eslint": "^9.39.5",
     "eslint-config-next": "^15.5.26",
     "typescript": "^5.9.2"
+  },
+  "overrides": {
+    "postcss": "8.5.28"
   }
 }

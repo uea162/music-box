@@ -97,7 +97,10 @@ async function songsForTerm({ term, country }: SeedTerm): Promise<Song[]> {
       next: { revalidate: 60 * 60 * 6 },
       signal: AbortSignal.timeout(5_000),
     });
-    if (!response.ok) return [];
+        // Next.js 15.5 only writes fetch Data Cache entries for HTTP 200
+        // (patch-fetch.js; docs under cache: force-cache). 403/429/503 are not
+        // stored, so a failed term is retried on the next request.
+        if (!response.ok) return [];
     const data = (await response.json()) as { results?: ITunesTrack[] };
     return songsFromTracks(data.results ?? []);
   } catch {

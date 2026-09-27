@@ -834,7 +834,6 @@ export function JukeboxExperience() {
 
       <header className="brand">
         <h1>Music Box</h1>
-        <p>One record for this exact moment</p>
       </header>
 
       <div className="corner-index" aria-hidden="true">

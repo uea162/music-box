@@ -224,7 +224,7 @@ export function JukeboxExperience() {
     const horizontalPitch = CARD_WIDTH + CARD_GAP_X;
     const wallSpan = columns * horizontalPitch;
 
-    wallSongs.forEach((song, index) => {
+    wallSongs.forEach((song) => {
       const textureCanvas = document.createElement("canvas");
       textureCanvas.width = 420;
       textureCanvas.height = 604;
@@ -298,8 +298,8 @@ export function JukeboxExperience() {
     let targetScale = 1;
     let autoOffset = 0;
     let lastFrameTime = performance.now();
-    let pointerStart = new THREE.Vector2();
-    let targetStart = new THREE.Vector2();
+    const pointerStart = new THREE.Vector2();
+    const targetStart = new THREE.Vector2();
     let dragging = false;
     let moved = 0;
     let frame = 0;

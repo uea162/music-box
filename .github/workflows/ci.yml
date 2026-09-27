@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  verify:
+    name: lint, build, typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          # Node.js 24 is the current Active LTS and satisfies Next.js 15 engines (>=20).
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      # `next build` rewrites `.next/types`. Running `tsc --noEmit` at the same
+      # time has produced TS6053 (missing generated files). Keep these steps
+      # in this job so they always run one after another.
+      - name: Build
+        run: npm run build
+
+      - name: Typecheck
+        run: npm run typecheck

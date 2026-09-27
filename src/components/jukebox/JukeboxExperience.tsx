@@ -15,6 +15,7 @@ interface CardRecord {
   texture: THREE.CanvasTexture;
   song: Song;
   image: HTMLImageElement | null;
+  instanceIndex: number;
   baseX: number;
   baseY: number;
   columnSpan: number;
@@ -77,8 +78,69 @@ declare global {
     __musicBoxDebug?: {
       memory: () => { geometries: number; textures: number };
       activeLoops: () => number;
+      highlights: () => {
+        selectedCount: number;
+        playingCount: number;
+        songId: string | null;
+        instanceIndex: number | null;
+        title: string | null;
+        artist: string | null;
+      };
+      cardPoints: () => Array<{
+        instanceIndex: number;
+        songId: string;
+        title: string;
+        clientX: number;
+        clientY: number;
+        selected: boolean;
+        playing: boolean;
+      }>;
     };
   }
+}
+
+function closestCard(
+  cards: CardRecord[],
+  songId: string | null,
+  preferredInstance: number | null,
+  score: (card: CardRecord) => number = (card) => card.baseX * card.baseX + card.baseY * card.baseY,
+) {
+  if (!songId) return null;
+  const matches = cards.filter((card) => card.song.id === songId);
+  if (!matches.length) return null;
+  if (preferredInstance !== null) {
+    const preferred = matches.find((card) => card.instanceIndex === preferredInstance);
+    if (preferred) return preferred;
+  }
+  let best = matches[0];
+  let bestDistance = score(best);
+  for (let index = 1; index < matches.length; index += 1) {
+    const card = matches[index];
+    const distance = score(card);
+    const nearer = distance < bestDistance - 1e-6;
+    const tie = Math.abs(distance - bestDistance) <= 1e-6 && card.instanceIndex < best.instanceIndex;
+    if (nearer || tie) {
+      best = card;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+function cardVisual(
+  card: CardRecord,
+  playingId: string | null,
+  progress: number,
+  selectedId: string | null,
+  instanceIndex: number | null,
+) {
+  const active = instanceIndex !== null && card.instanceIndex === instanceIndex;
+  const playing = active && card.song.id === playingId;
+  return {
+    playing,
+    progress: playing ? progress : 0,
+    selected: active && card.song.id === selectedId,
+  };
 }
 
 function drawCard(
@@ -195,6 +257,8 @@ export function JukeboxExperience() {
   const playingIdRef = useRef(playingId);
   const selectedIdRef = useRef(selectedId);
   const progressRef = useRef(progress);
+  const selectedInstanceRef = useRef<number | null>(null);
+  const toggleSongRef = useRef<(song: Song) => void>(() => {});
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const resizeRendererRef = useRef<() => void>(() => {});
   playingIdRef.current = playingId;
@@ -276,26 +340,22 @@ export function JukeboxExperience() {
 
     const geometry = new THREE.PlaneGeometry(CARD_WIDTH, CARD_HEIGHT, 1, 1);
     // Render beyond every viewport edge so the cylindrical wall stays full-bleed
-    // while it is being dragged. The extra rows are visual instances of the
-    // catalog, each with its own id so selection remains local to one card.
+    // while it is being dragged. Extra cells reuse catalog songs. Playback and
+    // selection store the original song id; the instance index lives on the mesh.
     const { columns, rows } = gridForBreakpoint(breakpoint);
     let disposed = false;
     const artworkImages: HTMLImageElement[] = [];
     const minimumCardCount = columns * rows;
     const wallSongs = Array.from(
       { length: Math.max(songs.length, minimumCardCount) },
-      (_, index) => {
-        const song = songs[index % songs.length];
-        if (index < songs.length) return song;
-        return { ...song, id: `${song.id}-wall-${index}` };
-      },
+      (_, index) => songs[index % songs.length],
     );
     const cards: CardRecord[] = [];
     const columnHeights = Array.from({ length: columns }, () => 0);
     const horizontalPitch = CARD_WIDTH + CARD_GAP_X;
     const wallSpan = columns * horizontalPitch;
 
-    wallSongs.forEach((song) => {
+    wallSongs.forEach((song, index) => {
       const textureCanvas = document.createElement("canvas");
       textureCanvas.width = 420;
       textureCanvas.height = 604;
@@ -312,7 +372,9 @@ export function JukeboxExperience() {
         depthWrite: true,
       });
       const mesh = new THREE.Mesh(geometry, material);
-      const seed = seededNumber(song.id);
+      // Keep the previous per-instance height variation. Clones used to hash a
+      // `-wall-${index}` id; that suffix is only a seed now, not stored state.
+      const seed = seededNumber(index < songs.length ? song.id : `${song.id}-wall-${index}`);
       // The reference wall uses stable column widths. Variation belongs to card
       // height only; scaling the whole card is what made neighbouring cards collide.
       const heightScale = 0.94 + (seed % 5) * 0.025;
@@ -323,10 +385,10 @@ export function JukeboxExperience() {
       columnHeights[col] += scaledHeight + CARD_GAP_Y;
       mesh.position.set(x, y, 0);
       mesh.userData.songId = song.id;
+      mesh.userData.instanceIndex = index;
       mesh.userData.cardIndex = cards.length;
       group.add(mesh);
 
-      const playing = song.id === playingIdRef.current;
       const card: CardRecord = {
         mesh,
         canvas: textureCanvas,
@@ -334,30 +396,14 @@ export function JukeboxExperience() {
         texture,
         song,
         image: null,
+        instanceIndex: index,
         baseX: x,
         baseY: y,
         columnSpan: 0,
         heightScale,
-        visualState: {
-          playing,
-          progress: playing ? progressRef.current : 0,
-          selected: song.id === selectedIdRef.current,
-        },
+        visualState: { playing: false, progress: 0, selected: false },
       };
       cards.push(card);
-      drawCard(card, card.visualState);
-
-      if (song.artworkUrl) {
-        const image = new Image();
-        image.crossOrigin = "anonymous";
-        artworkImages.push(image);
-        image.onload = () => {
-          if (disposed) return;
-          card.image = image;
-          drawCard(card, card.visualState);
-        };
-        image.src = song.artworkUrl;
-      }
     });
 
     cards.forEach((card) => {
@@ -366,6 +412,39 @@ export function JukeboxExperience() {
       card.baseY += card.columnSpan / 2;
     });
     cardsRef.current = cards;
+
+    const screenCenterDistance = (card: CardRecord) => {
+      const theta = card.baseX / CYLINDER_RADIUS;
+      const projected = new THREE.Vector3(
+        Math.sin(theta) * CYLINDER_RADIUS,
+        card.baseY,
+        (Math.cos(theta) - 1) * CYLINDER_RADIUS,
+      );
+      projected.project(camera);
+      return projected.x * projected.x + projected.y * projected.y;
+    };
+    const paintWall = () => {
+      const anchorId = selectedIdRef.current ?? playingIdRef.current;
+      if (anchorId) {
+        selectedInstanceRef.current =
+          closestCard(cards, anchorId, selectedInstanceRef.current, screenCenterDistance)?.instanceIndex ??
+          null;
+      } else {
+        selectedInstanceRef.current = null;
+      }
+      cards.forEach((card) => {
+        drawCard(
+          card,
+          cardVisual(
+            card,
+            playingIdRef.current,
+            progressRef.current,
+            selectedIdRef.current,
+            selectedInstanceRef.current,
+          ),
+        );
+      });
+    };
 
     const current = new THREE.Vector2(0, 0);
     const target = new THREE.Vector2(0, 0);
@@ -402,8 +481,33 @@ export function JukeboxExperience() {
       const cardIndex = hit?.object.userData.cardIndex as number | undefined;
       const card = typeof cardIndex === "number" ? cards[cardIndex] : undefined;
       if (!card) return;
+      const audio = audioRef.current;
+      const activeSongId = audio?.dataset.songId || playingIdRef.current;
+      const sameSong = activeSongId === card.song.id;
+      const sameInstance = sameSong && selectedInstanceRef.current === card.instanceIndex;
+      selectedInstanceRef.current = card.instanceIndex;
+      selectedIdRef.current = card.song.id;
       setSelectedId(card.song.id);
-      void toggleSong(card.song);
+      if (sameInstance && audio && !audio.paused) {
+        audio.pause();
+        return;
+      }
+      if (sameSong && audio && !audio.paused) {
+        cards.forEach((item) => {
+          drawCard(
+            item,
+            cardVisual(
+              item,
+              card.song.id,
+              progressRef.current,
+              card.song.id,
+              selectedInstanceRef.current,
+            ),
+          );
+        });
+        return;
+      }
+      void toggleSongRef.current(card.song);
     };
 
     const onPointerDown = (event: PointerEvent) => {
@@ -447,11 +551,26 @@ export function JukeboxExperience() {
     window.addEventListener("resize", resize);
     resizeRendererRef.current = resize;
     resize();
+    paintWall();
+    cards.forEach((card) => {
+      if (!card.song.artworkUrl) return;
+      const image = new Image();
+      image.crossOrigin = "anonymous";
+      artworkImages.push(image);
+      image.onload = () => {
+        if (disposed) return;
+        card.image = image;
+        drawCard(card, card.visualState);
+      };
+      image.onerror = () => {};
+      image.src = card.song.artworkUrl;
+    });
 
     sceneApiRef.current = {
       focus(songId: string) {
-        const card = cards.find((item) => item.song.id === songId);
+        const card = closestCard(cards, songId, selectedInstanceRef.current);
         if (!card) return;
+        selectedInstanceRef.current = card.instanceIndex;
         target.set(-card.baseX, -card.baseY);
         targetScale = window.innerWidth < 820 ? 1.1 : 1.38;
       },
@@ -516,17 +635,21 @@ export function JukeboxExperience() {
 
       renderer.render(scene, camera);
     };
-    // Render every card once so off-screen textures are counted, then cull again.
-    cards.forEach((card) => {
-      card.mesh.frustumCulled = false;
-    });
+    // The debug hook is read-only. Do not add a playback-speed toggle.
+    // Counting off-screen textures needs one unculled render, and only in
+    // development, so production leaves frustum culling at its default.
+    if (process.env.NODE_ENV === "development") {
+      cards.forEach((card) => {
+        card.mesh.frustumCulled = false;
+      });
+    }
     activeAnimationLoopCount += 1;
     animate();
-    cards.forEach((card) => {
-      card.mesh.frustumCulled = true;
-    });
-
     if (process.env.NODE_ENV === "development") {
+      cards.forEach((card) => {
+        card.mesh.frustumCulled = true;
+      });
+      const point = new THREE.Vector3();
       window.__musicBoxDebug = {
         memory() {
           const { geometries, textures } = renderer.info.memory;
@@ -534,6 +657,35 @@ export function JukeboxExperience() {
         },
         activeLoops() {
           return activeAnimationLoopCount;
+        },
+        highlights() {
+          const selected = cards.filter((card) => card.visualState.selected);
+          const playing = cards.filter((card) => card.visualState.playing);
+          const card = selected[0];
+          return {
+            selectedCount: selected.length,
+            playingCount: playing.length,
+            songId: card?.song.id ?? null,
+            instanceIndex: card?.instanceIndex ?? null,
+            title: card?.song.title ?? null,
+            artist: card?.song.artist ?? null,
+          };
+        },
+        cardPoints() {
+          const rect = canvas.getBoundingClientRect();
+          return cards.map((card) => {
+            card.mesh.getWorldPosition(point);
+            point.project(camera);
+            return {
+              instanceIndex: card.instanceIndex,
+              songId: card.song.id,
+              title: card.song.title,
+              clientX: rect.left + (point.x * 0.5 + 0.5) * rect.width,
+              clientY: rect.top + (-point.y * 0.5 + 0.5) * rect.height,
+              selected: card.visualState.selected,
+              playing: card.visualState.playing,
+            };
+          });
         },
       };
     }
@@ -555,6 +707,8 @@ export function JukeboxExperience() {
       if (resizeRendererRef.current === resize) resizeRendererRef.current = () => {};
       artworkImages.forEach((image) => {
         image.onload = null;
+        image.onerror = null;
+        image.src = "";
       });
       cards.forEach((card) => {
         card.texture.dispose();
@@ -568,19 +722,20 @@ export function JukeboxExperience() {
       sceneApiRef.current = null;
     };
   // Rebuild only when the catalog or breakpoint changes. Playback is read from
-  // refs so progress ticks do not recreate textures, and resize inside one
-  // breakpoint only updates the renderer size.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // refs, and card clicks call toggleSongRef, so progress ticks and play/pause
+  // do not recreate textures. Resize inside one breakpoint only updates size.
   }, [songs, breakpoint]);
 
   const refreshCards = useCallback(
     (nextPlayingId = playingId, nextProgress = progress, nextSelectedId = selectedId) => {
       cardsRef.current.forEach((card) => {
-        const nextState = {
-          playing: card.song.id === nextPlayingId,
-          progress: card.song.id === nextPlayingId ? nextProgress : 0,
-          selected: card.song.id === nextSelectedId,
-        };
+        const nextState = cardVisual(
+          card,
+          nextPlayingId,
+          nextProgress,
+          nextSelectedId,
+          selectedInstanceRef.current,
+        );
         const unchanged =
           card.visualState.playing === nextState.playing &&
           card.visualState.selected === nextState.selected &&
@@ -600,7 +755,7 @@ export function JukeboxExperience() {
       const audio = audioRef.current;
       if (!audio || !song.previewUrl) return;
 
-      if (playingId === song.id && !audio.paused) {
+      if (playingIdRef.current === song.id && !audio.paused) {
         audio.pause();
         return;
       }
@@ -618,13 +773,16 @@ export function JukeboxExperience() {
         setPlayingId(null);
       }
     },
-    [playingId],
+    [],
   );
+  toggleSongRef.current = toggleSong;
 
   const chooseRandom = useCallback(() => {
     if (!songs.length || phase === "landing") return;
     const pool = songs.filter((song) => song.id !== selectedSong?.id);
     const song = pool[Math.floor(Math.random() * pool.length)] ?? songs[0];
+    const match = closestCard(cardsRef.current, song.id, null);
+    selectedInstanceRef.current = match?.instanceIndex ?? null;
     setPhase("landing");
     setSelectedId(song.id);
     setSelectedSong(song);

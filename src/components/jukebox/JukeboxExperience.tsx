@@ -37,8 +37,19 @@ const PALETTES = [
   ["#3f5273", "#0b111d"],
 ];
 
-function truncate(text: string, max: number) {
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+const labelFont =
+  "'Avenir Next', 'PingFang TC', 'PingFang HK', 'PingFang SC', 'Hiragino Sans CNS', 'Hiragino Sans GB', 'Microsoft JhengHei', 'Microsoft YaHei', 'Noto Sans CJK TC', 'Noto Sans CJK SC', sans-serif";
+
+function ellipsize(ctx: CanvasRenderingContext2D, text: string, maxWidth: number) {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  const ellipsis = "…";
+  let visible = "";
+  for (const character of text) {
+    const candidate = `${visible}${character}`;
+    if (ctx.measureText(`${candidate}${ellipsis}`).width > maxWidth) break;
+    visible = candidate;
+  }
+  return `${visible}${ellipsis}`;
 }
 
 function seededNumber(value: string) {
@@ -197,11 +208,11 @@ function drawCard(
   ctx.restore();
 
   ctx.fillStyle = "#f5ede0";
-  ctx.font = "600 27px 'Avenir Next', sans-serif";
-  ctx.fillText(truncate(song.title, 23), 28, 430);
+  ctx.font = `600 27px ${labelFont}`;
+  ctx.fillText(ellipsize(ctx, song.title, width - 56), 28, 430);
   ctx.fillStyle = "rgba(245,237,224,.66)";
-  ctx.font = "500 17px 'Avenir Next', sans-serif";
-  ctx.fillText(truncate(song.artist, 28), 28, 462);
+  ctx.font = `500 17px ${labelFont}`;
+  ctx.fillText(ellipsize(ctx, song.artist, width - 56), 28, 462);
 
   ctx.fillStyle = "rgba(245,237,224,.18)";
   ctx.fillRect(28, 505, width - 56, 5);
@@ -850,8 +861,8 @@ export function JukeboxExperience() {
               transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
             >
               <p className="result-kicker">Selected for right now</p>
-              <h2>{selectedSong.title}</h2>
-              <p className="result-artist">{selectedSong.artist}</p>
+              <h2 lang="zh-Hant">{selectedSong.title}</h2>
+              <p className="result-artist" lang="zh-Hant">{selectedSong.artist}</p>
               <p className="result-note">
                 A warm, unhurried pick for the room you are in. The recommendation engine comes next;
                 this prototype is proving the wall, the motion and the listening loop.

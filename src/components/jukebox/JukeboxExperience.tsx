@@ -36,21 +36,6 @@ const PALETTES = [
   ["#3f5273", "#0b111d"],
 ];
 
-// Latin stays on Avenir Next / sans-serif. Later families only cover CJK glyphs
-// those fonts lack, so English cards keep the same shapes.
-const CARD_LABEL_FONT =
-  "'Avenir Next', sans-serif, 'PingFang TC', 'PingFang HK', 'Microsoft JhengHei', 'Microsoft YaHei', 'Noto Sans CJK TC', 'Noto Sans CJK HK', 'Noto Sans CJK SC', 'Noto Sans TC', 'Source Han Sans TC', 'WenQuanYi Micro Hei', 'Droid Sans Fallback'";
-
-function ellipsize(ctx: CanvasRenderingContext2D, text: string, maxWidth: number) {
-  if (ctx.measureText(text).width <= maxWidth) return text;
-  const ellipsis = "…";
-  let end = text.length;
-  while (end > 0 && ctx.measureText(`${text.slice(0, end)}${ellipsis}`).width > maxWidth) {
-    end -= 1;
-  }
-  return `${text.slice(0, end)}${ellipsis}`;
-}
-
 function seededNumber(value: string) {
   let hash = 2166136261;
   for (let index = 0; index < value.length; index += 1) {
@@ -118,12 +103,28 @@ function drawCard(
   }
   ctx.restore();
 
+  // System CJK families only. Latin stays on Avenir Next / sans-serif.
+  // Traditional faces come first so HK store titles keep their glyphs.
+  const labelFont =
+    "'Avenir Next', sans-serif, 'PingFang TC', 'PingFang HK', 'PingFang SC', 'Hiragino Sans CNS', 'Hiragino Sans GB', 'Microsoft JhengHei', 'Microsoft YaHei', 'Noto Sans CJK TC', 'Noto Sans CJK SC'";
+  const ellipsize = (text: string, maxWidth: number) => {
+    if (ctx.measureText(text).width <= maxWidth) return text;
+    const ellipsis = "…";
+    let visible = "";
+    for (const character of text) {
+      const candidate = `${visible}${character}`;
+      if (ctx.measureText(`${candidate}${ellipsis}`).width > maxWidth) break;
+      visible = candidate;
+    }
+    return `${visible}${ellipsis}`;
+  };
+
   ctx.fillStyle = "#f5ede0";
-  ctx.font = `600 27px ${CARD_LABEL_FONT}`;
-  ctx.fillText(ellipsize(ctx, song.title, width - 56), 28, 430);
+  ctx.font = `600 27px ${labelFont}`;
+  ctx.fillText(ellipsize(song.title, width - 56), 28, 430);
   ctx.fillStyle = "rgba(245,237,224,.66)";
-  ctx.font = `500 17px ${CARD_LABEL_FONT}`;
-  ctx.fillText(ellipsize(ctx, song.artist, width - 56), 28, 462);
+  ctx.font = `500 17px ${labelFont}`;
+  ctx.fillText(ellipsize(song.artist, width - 56), 28, 462);
 
   ctx.fillStyle = "rgba(245,237,224,.18)";
   ctx.fillRect(28, 505, width - 56, 5);

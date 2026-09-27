@@ -51,7 +51,7 @@ lint、生产构建与 TypeScript 检查均通过。
 - 单一 `<audio>` 试听播放器。
 - `/api/catalog` iTunes 搜索聚合、去重与 fallback。
 - 随机选歌、聚焦、结果面板和返回墙面流程。
-- 独立 vignette 层与噪点层。
+- 独立 vignette 层。
 - 播放进度更新时只重绘状态变化的卡片，避免全量纹理重绘。
 - `npm run lint`、`npm run build` 和 `npm run typecheck` 通过。
 

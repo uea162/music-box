@@ -185,7 +185,7 @@ button {
   max-width: 100%;
   padding: 0 12px;
   background: #fff;
-  color: rgb(13, 21, 38);
+  color: var(--ink-button);
 }
 
 .primary-action:hover {
@@ -249,7 +249,7 @@ button {
   margin: 0 0 12px;
   color: var(--muted-meta);
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 500;
   letter-spacing: 0.28em;
   text-transform: uppercase;
 }
@@ -319,6 +319,10 @@ button {
 
   .dock-actions {
     grid-template-columns: 1fr;
+  }
+
+  .dock .primary-action {
+    width: 100%;
   }
 
   .dock .ghost-action {

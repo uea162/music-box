@@ -83,6 +83,7 @@ lint、生产构建与 TypeScript 检查均通过。
 - 纹理：每首歌一张共享纹理，另加一张给唯一的选中/播放卡。白框只画在这张上，墙上最多一张白框。
 - 重排后：原选中卡还在就保留；不在了就换成离屏幕中心最近的同歌副本。聚焦状态下重新执行 focus；否则选中卡只要被屏幕边缘切到一点，就移回屏幕中心。
 - 暂停时立即清空 `playingId`，墙体不用等 `pause` 事件就开始恢复移动。
+- 开发调试挂钩移到 `src/components/jukebox/debug.ts`，开发模式下动态加载。
 
 #### `src/app/globals.css`
 
@@ -597,7 +598,8 @@ npm run typecheck
     - `refreshCards` 的 `unchanged` 短路必须保留，删掉后播放时会严重掉帧。
 
 11. **调试挂钩只在开发模式、只读。**
-    - `window.__musicBoxDebug`（`memory()`、`activeLoops()`、`highlights()`、`cardPoints()`、`motion()`）只在 `process.env.NODE_ENV === "development"` 下挂载，生产构建里不能出现（`grep -R __musicBoxDebug .next` 应无结果）。
+    - `window.__musicBoxDebug`（`memory()`、`activeLoops()`、`highlights()`、`cardPoints()`、`motion()`）只在 `process.env.NODE_ENV === "development"` 下挂载，生产构建里不能出现（在干净的 `.next` 上 build 后，`grep -R __musicBoxDebug .next` 应无结果）。
+    - 全局名只写在 `src/components/jukebox/debug.ts` 里，组件在开发分支里用动态 `import()` 加载它。生产构建不会编译这个文件，webpack 缓存里也就没有这个名字。不要改成静态 import。
     - 不要加调速或任何写入型的调试开关。
 
 12. **构建和 typecheck 必须顺序执行。**

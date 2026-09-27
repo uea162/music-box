@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { fallbackSongs } from "@/data/fallback-songs";
 import type { Song } from "@/types/song";
+import type { JukeboxDebugApi } from "./debug";
 
 type Phase = "loading" | "idle" | "landing" | "reveal";
 type DragScope = "all-columns" | "pressed-column";
@@ -318,44 +319,6 @@ function extendColumns(base: WallColumn[], minLength: number) {
 }
 
 let activeAnimationLoopCount = 0;
-
-declare global {
-  interface Window {
-    __musicBoxDebug?: {
-      memory: () => { geometries: number; textures: number };
-      activeLoops: () => number;
-      highlights: () => {
-        selectedCount: number;
-        playingCount: number;
-        songId: string | null;
-        instanceIndex: number | null;
-        title: string | null;
-        artist: string | null;
-      };
-      cardPoints: () => Array<{
-        instanceIndex: number;
-        songId: string;
-        title: string;
-        clientX: number;
-        clientY: number;
-        selected: boolean;
-        playing: boolean;
-        column: number;
-        visible: boolean;
-        rect: { left: number; top: number; right: number; bottom: number };
-      }>;
-      motion: () => {
-        targetSpeed: number;
-        speed: number;
-        reducedMotion: boolean;
-        pressed: boolean;
-        inertia: number;
-        zoom: number;
-        columnOffsets: number[];
-      };
-    };
-  }
-}
 
 function cardVisual(
   card: CardTexture,
@@ -1153,13 +1116,14 @@ export function JukeboxExperience() {
     animate(performance.now());
 
     // The debug hook is read-only. Do not add a playback-speed toggle.
+    let removeDebugHook: (() => void) | null = null;
     if (process.env.NODE_ENV === "development") {
       const point = { x: 0, y: 0 };
       const drawnState = (card: WallCard) =>
         card.uniforms.uMap.value === activeFace.texture
           ? activeFace.visualState
           : faces.get(card.song.id)?.visualState ?? { playing: false, progress: 0, selected: false };
-      window.__musicBoxDebug = {
+      const debugApi: JukeboxDebugApi = {
         memory() {
           const { geometries, textures } = renderer.info.memory;
           return { geometries, textures };
@@ -1217,15 +1181,16 @@ export function JukeboxExperience() {
           };
         },
       };
+      void import("./debug").then(({ installDebugHook }) => {
+        if (!disposed) removeDebugHook = installDebugHook(debugApi);
+      });
     }
 
     return () => {
       disposed = true;
       cancelAnimationFrame(frame);
       activeAnimationLoopCount -= 1;
-      if (process.env.NODE_ENV === "development") {
-        delete window.__musicBoxDebug;
-      }
+      removeDebugHook?.();
       window.clearTimeout(resizeTimer);
       if (pointer.pressed && canvas.hasPointerCapture(pointer.id)) canvas.releasePointerCapture(pointer.id);
       canvas.removeEventListener("pointerdown", onPointerDown);

@@ -321,7 +321,7 @@ button {
     grid-template-columns: 1fr;
   }
 
-  .ghost-action {
+  .dock .ghost-action {
     display: none;
   }
 

@@ -6,7 +6,7 @@
 
 桌面端在 1440×900 的实测结果为：中心卡片约 225px 宽，明显圆角，约三行大卡可见，中央清晰、两侧缩小变暗并后退。歌曲播放时浏览器采样约 120fps（测试机器为高刷新率设备），控制台无错误。生产构建与 TypeScript 检查均通过。
 
-当前项目**不是 Git 仓库**。不要假设存在可回滚提交，也不要执行清理或覆盖操作。接手后应先阅读本文件和 `src/components/jukebox/JukeboxExperience.tsx`。
+代码现已托管在 GitHub `uea162/music-box`。`main` 是事实来源；每个任务单独开分支并提交 Pull Request，不要直接推送到 `main`。接手后应先阅读本文件和 `src/components/jukebox/JukeboxExperience.tsx`。
 
 ---
 
@@ -84,7 +84,7 @@
 
 ### 2.2 本项目此前已创建或修改的文件
 
-由于项目没有 Git 元数据，无法从 Git 精确恢复“每一轮”的文件历史。以下是本次项目工作中已知创建或修改、且组成当前实现的文件：
+仓库现已托管在 GitHub `uea162/music-box`。首次提交之前的修改没有逐轮 Git 记录，因此无法从 Git 精确恢复“每一轮”的文件历史。以下是本次项目工作中已知创建或修改、且组成当前实现的文件：
 
 - `src/app/globals.css`
   - 全屏 shell、暗色背景、独立 `.vignette`、噪点层、固定品牌区、右上计数、底部 dock、结果面板、响应式样式。
@@ -486,38 +486,45 @@ npm run typecheck
 
 ## 7. Git 状态
 
-### 7.1 当前 branch
+### 7.1 仓库与分支
 
-不可用。项目目录及其父级均没有 `.git`：
+代码托管在 GitHub：`uea162/music-box`（https://github.com/uea162/music-box）。
 
-```text
-D:\Project\codex-project\music-box\.git  False
-D:\Project\codex-project\.git            False
-D:\Project\.git                          False
-D:\.git                                  False
-```
+`main` 是唯一事实来源。不要在 `main` 上直接开发或推送。每个任务单独开分支，完成后通过 Pull Request 合入 `main`。
 
-`git branch --show-current` / `git rev-parse --show-toplevel` 返回：
+查看当前分支与仓库根目录：
 
 ```text
-fatal: not a git repository (or any of the parent directories): .git
+git branch --show-current
+git rev-parse --show-toplevel
 ```
 
-### 7.2 git status
+### 7.2 CI
 
-不可用，原因同上。无法可靠判断哪些文件相对某个基线是 modified/untracked。
+Pull Request，以及推送到 `main` 时，GitHub Actions 严格按顺序执行：
 
-### 7.3 当前 diff 核心内容
+```text
+npm ci
+npm run lint
+npm run build
+npm run typecheck
+```
 
-没有 Git baseline，无法生成真实 `git diff`。源码当前状态的核心变化已在第 2、3 节完整列出，主要集中于：
+`build` 和 `typecheck` 不能并行。`next build` 会重建 `.next/types`，与 `tsc --noEmit` 同时跑时曾出现找不到生成文件的 TS6053 竞态（见 4.5 第 5 条）。本地验证也必须按这个顺序。
+
+### 7.3 当前实现的核心文件
+
+源码的核心仍集中于第 2、3 节所写的实现，主要是：
 
 - `JukeboxExperience.tsx`：3D 圆柱墙、自动循环、masonry、圆角卡片、景深、交互、试听和性能优化。
 - `globals.css`：全屏暗色 UI、固定 vignette、标题、控制面板和响应式。
 - `api/catalog/route.ts`：iTunes 目录聚合与 fallback。
 
-### 7.4 是否有未提交修改
+具体改动以对应分支相对 `main` 的 Pull Request diff 为准。
 
-从 Git 角度无法回答，因为仓库尚未初始化。当前所有项目文件都不受本地 Git 版本控制保护。**不要自动删除、重置或覆盖任何文件。** 如果后续需要初始化 Git，应先征得用户同意，并在首次提交前审查 `.gitignore` 和敏感文件。
+### 7.4 工作区注意
+
+用 `git status` 判断是否有未提交修改。未提交的本地改动不会进入 CI，也不会出现在 Pull Request 里。不要在未审查的情况下执行 `git reset --hard`、`git clean` 或覆盖未跟踪文件。
 
 ---
 

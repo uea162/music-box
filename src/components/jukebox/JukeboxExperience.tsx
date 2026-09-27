@@ -54,6 +54,33 @@ function wrap(value: number, span: number) {
   return ((value + span / 2) % span + span) % span - span / 2;
 }
 
+type Breakpoint = "desktop" | "tablet" | "mobile";
+
+const BREAKPOINT_RESIZE_DEBOUNCE_MS = 150;
+
+function breakpointFromWidth(width: number): Breakpoint {
+  if (width >= 1180) return "desktop";
+  if (width >= 720) return "tablet";
+  return "mobile";
+}
+
+function gridForBreakpoint(breakpoint: Breakpoint) {
+  if (breakpoint === "mobile") return { columns: 6, rows: 7 };
+  if (breakpoint === "tablet") return { columns: 9, rows: 6 };
+  return { columns: 12, rows: 5 };
+}
+
+let activeAnimationLoopCount = 0;
+
+declare global {
+  interface Window {
+    __musicBoxDebug?: {
+      memory: () => { geometries: number; textures: number };
+      activeLoops: () => number;
+    };
+  }
+}
+
 function drawCard(
   card: CardRecord,
   state: { playing: boolean; progress: number; selected: boolean },
@@ -164,6 +191,34 @@ export function JukeboxExperience() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedSong, setSelectedSong] = useState<Song | null>(null);
   const [progress, setProgress] = useState(0);
+  const [breakpoint, setBreakpoint] = useState<Breakpoint | null>(null);
+  const playingIdRef = useRef(playingId);
+  const selectedIdRef = useRef(selectedId);
+  const progressRef = useRef(progress);
+  playingIdRef.current = playingId;
+  selectedIdRef.current = selectedId;
+  progressRef.current = progress;
+
+  useEffect(() => {
+    const commitBreakpoint = () => {
+      const next = breakpointFromWidth(window.innerWidth);
+      setBreakpoint((current) => (current === next ? current : next));
+    };
+
+    commitBreakpoint();
+
+    let timeoutId = 0;
+    const onResize = () => {
+      window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(commitBreakpoint, BREAKPOINT_RESIZE_DEBOUNCE_MS);
+    };
+
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.clearTimeout(timeoutId);
+      window.removeEventListener("resize", onResize);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -187,7 +242,7 @@ export function JukeboxExperience() {
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || songs.length === 0) return;
+    if (!canvas || songs.length === 0 || breakpoint === null) return;
 
     const renderer = new THREE.WebGLRenderer({
       canvas,
@@ -208,8 +263,9 @@ export function JukeboxExperience() {
     // Render beyond every viewport edge so the cylindrical wall stays full-bleed
     // while it is being dragged. The extra rows are visual instances of the
     // catalog, each with its own id so selection remains local to one card.
-    const columns = window.innerWidth < 720 ? 6 : window.innerWidth < 1180 ? 9 : 12;
-    const rows = window.innerWidth < 720 ? 7 : window.innerWidth < 1180 ? 6 : 5;
+    const { columns, rows } = gridForBreakpoint(breakpoint);
+    let disposed = false;
+    const artworkImages: HTMLImageElement[] = [];
     const minimumCardCount = columns * rows;
     const wallSongs = Array.from(
       { length: Math.max(songs.length, minimumCardCount) },
@@ -255,6 +311,7 @@ export function JukeboxExperience() {
       mesh.userData.cardIndex = cards.length;
       group.add(mesh);
 
+      const playing = song.id === playingIdRef.current;
       const card: CardRecord = {
         mesh,
         canvas: textureCanvas,
@@ -266,7 +323,11 @@ export function JukeboxExperience() {
         baseY: y,
         columnSpan: 0,
         heightScale,
-        visualState: { playing: false, progress: 0, selected: false },
+        visualState: {
+          playing,
+          progress: playing ? progressRef.current : 0,
+          selected: song.id === selectedIdRef.current,
+        },
       };
       cards.push(card);
       drawCard(card, card.visualState);
@@ -274,7 +335,9 @@ export function JukeboxExperience() {
       if (song.artworkUrl) {
         const image = new Image();
         image.crossOrigin = "anonymous";
+        artworkImages.push(image);
         image.onload = () => {
+          if (disposed) return;
           card.image = image;
           drawCard(card, card.visualState);
         };
@@ -382,6 +445,7 @@ export function JukeboxExperience() {
     };
 
     const animate = () => {
+      if (disposed) return;
       frame = requestAnimationFrame(animate);
       const now = performance.now();
       const delta = Math.min((now - lastFrameTime) / 1000, 0.05);
@@ -436,10 +500,28 @@ export function JukeboxExperience() {
 
       renderer.render(scene, camera);
     };
+    activeAnimationLoopCount += 1;
     animate();
 
+    if (process.env.NODE_ENV === "development") {
+      window.__musicBoxDebug = {
+        memory() {
+          const { geometries, textures } = renderer.info.memory;
+          return { geometries, textures };
+        },
+        activeLoops() {
+          return activeAnimationLoopCount;
+        },
+      };
+    }
+
     return () => {
+      disposed = true;
       cancelAnimationFrame(frame);
+      activeAnimationLoopCount -= 1;
+      if (process.env.NODE_ENV === "development") {
+        delete window.__musicBoxDebug;
+      }
       canvas.removeEventListener("pointerdown", onPointerDown);
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUp);
@@ -447,18 +529,26 @@ export function JukeboxExperience() {
       canvas.removeEventListener("pointerleave", onPointerLeave);
       canvas.removeEventListener("wheel", onWheel);
       window.removeEventListener("resize", resize);
+      artworkImages.forEach((image) => {
+        image.onload = null;
+      });
       cards.forEach((card) => {
         card.texture.dispose();
+        card.mesh.material.map = null;
         card.mesh.material.dispose();
       });
       geometry.dispose();
+      group.clear();
+      scene.clear();
       renderer.dispose();
       cardsRef.current = [];
       sceneApiRef.current = null;
     };
-  // The scene intentionally rebuilds only when the catalog changes.
+  // Rebuild only when the catalog or breakpoint changes. Playback is read from
+  // refs so progress ticks do not recreate textures, and resize inside one
+  // breakpoint only updates the renderer size.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [songs]);
+  }, [songs, breakpoint]);
 
   const refreshCards = useCallback(
     (nextPlayingId = playingId, nextProgress = progress, nextSelectedId = selectedId) => {

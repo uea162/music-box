@@ -586,25 +586,27 @@ export function JukeboxExperience() {
       </AnimatePresence>
 
       {phase !== "reveal" ? (
-        <motion.section
-          className="dock"
-          initial={{ opacity: 0, y: 22 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2, duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
-        >
-          <div className="dock-copy">
-            <strong>Let the room choose.</strong>
-            <span>{source === "itunes" ? "Live catalog · 30 sec previews" : "Offline study catalog"}</span>
-          </div>
-          <div className="dock-actions">
-            <button className="primary-action" onClick={chooseRandom} disabled={phase !== "idle" || !songs.length}>
-              {phase === "landing" ? "Bringing one forward…" : "Pick one record"}
-            </button>
-            <button className="ghost-action" onClick={() => canvasRef.current?.focus()}>
-              Drag the wall to explore
-            </button>
-          </div>
-        </motion.section>
+        <div className="dock-anchor">
+          <motion.section
+            className="dock"
+            initial={{ opacity: 0, y: 22 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2, duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+          >
+            <div className="dock-copy">
+              <strong>Let the room choose.</strong>
+              <span>{source === "itunes" ? "Live catalog · 30 sec previews" : "Offline study catalog"}</span>
+            </div>
+            <div className="dock-actions">
+              <button className="primary-action" onClick={chooseRandom} disabled={phase !== "idle" || !songs.length}>
+                {phase === "landing" ? "Bringing one forward…" : "Pick one record"}
+              </button>
+              <button className="ghost-action" onClick={() => canvasRef.current?.focus()}>
+                Drag the wall to explore
+              </button>
+            </div>
+          </motion.section>
+        </div>
       ) : null}
 
       <p className="source-note">Previews provided by the iTunes catalog · streamed, never stored</p>

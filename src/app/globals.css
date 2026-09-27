@@ -1,10 +1,11 @@
 :root {
-  --ink: #090708;
-  --wine: #1a0c12;
-  --paper: #f3eadc;
-  --muted: rgba(243, 234, 220, 0.58);
-  --line: rgba(243, 234, 220, 0.14);
-  --ember: #f1784f;
+  --ink: #0c090e;
+  --paper: #ffffff;
+  --muted: rgba(255, 255, 255, 0.55);
+  --muted-clause: rgba(255, 255, 255, 0.35);
+  --muted-meta: rgba(255, 255, 255, 0.4);
+  --line: rgba(255, 255, 255, 0.1);
+  --ink-button: rgb(13, 21, 38);
 }
 
 * {
@@ -22,7 +23,7 @@ body {
 
 body {
   overflow: hidden;
-  font-family: "Avenir Next", "Helvetica Neue", sans-serif;
+  font-family: var(--font-ui), "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
 }
 
 button,
@@ -41,9 +42,8 @@ button {
   height: 100svh;
   overflow: hidden;
   isolation: isolate;
-  background:
-    radial-gradient(circle at 52% 44%, rgba(117, 46, 47, 0.2), transparent 34%),
-    linear-gradient(140deg, #080708, #180b10 62%, #070607);
+  background-color: #0c090e;
+  background-image: radial-gradient(60% 50% at 50% 45%, #2a1430 0%, #150d19 45%, #0c090e 100%);
 }
 
 .vignette {
@@ -51,33 +51,12 @@ button {
   z-index: 5;
   inset: 0;
   pointer-events: none;
-  background:
-    linear-gradient(
-      90deg,
-      rgba(4, 3, 4, 0.8) 0%,
-      rgba(4, 3, 4, 0.28) 10%,
-      transparent 25%,
-      transparent 75%,
-      rgba(4, 3, 4, 0.3) 90%,
-      rgba(4, 3, 4, 0.82) 100%
-    ),
-    radial-gradient(
-      ellipse at center,
-      transparent 43%,
-      rgba(4, 3, 4, 0.06) 64%,
-      rgba(4, 3, 4, 0.56) 100%
-    );
-}
-
-.jukebox-shell::after {
-  position: absolute;
-  z-index: 9;
-  inset: 0;
-  pointer-events: none;
-  content: "";
-  opacity: 0.14;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.92' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.35'/%3E%3C/svg%3E");
-  mix-blend-mode: soft-light;
+  background: radial-gradient(
+    72% 66% at 50% 48%,
+    transparent 38%,
+    rgba(12, 9, 14, 0.55) 68%,
+    rgba(12, 9, 14, 0.97) 96%
+  );
 }
 
 .scene-canvas {
@@ -97,27 +76,20 @@ button {
 .brand {
   position: absolute;
   z-index: 10;
-  top: clamp(24px, 4vw, 58px);
-  left: clamp(24px, 4vw, 64px);
+  top: 26px;
+  left: 40px;
   pointer-events: none;
 }
 
 .brand h1 {
   margin: 0;
-  font-family: "Iowan Old Style", "Baskerville", "Times New Roman", serif;
-  font-size: clamp(48px, 7vw, 108px);
+  color: #fff;
+  font-family: var(--font-display), "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", serif;
+  font-size: clamp(40px, 6.4vw, 92px);
   font-weight: 400;
-  line-height: 0.82;
-  letter-spacing: -0.075em;
-  text-shadow: 0 14px 44px rgba(0, 0, 0, 0.5);
-}
-
-.brand p {
-  margin: 14px 0 0 5px;
-  color: var(--muted);
-  font-size: 11px;
-  letter-spacing: 0.23em;
-  text-transform: uppercase;
+  line-height: 0.86;
+  letter-spacing: -0.02em;
+  text-shadow: 0 2px 30px rgba(12, 9, 14, 0.9);
 }
 
 .corner-index {
@@ -128,9 +100,10 @@ button {
   display: flex;
   gap: 11px;
   align-items: center;
-  color: var(--muted);
+  color: var(--muted-meta);
   font-size: 11px;
-  letter-spacing: 0.16em;
+  font-weight: 500;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
@@ -138,8 +111,7 @@ button {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--ember);
-  box-shadow: 0 0 18px var(--ember);
+  background: rgba(255, 255, 255, 0.4);
 }
 
 .dock-anchor {
@@ -147,83 +119,102 @@ button {
   z-index: 12;
   left: 50%;
   bottom: clamp(18px, 4vw, 42px);
-  width: min(610px, calc(100vw - 28px));
+  width: 376px;
   transform: translateX(-50%);
 }
 
 .dock {
   width: 100%;
-  padding: 18px 20px 16px;
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  background: rgba(18, 10, 13, 0.76);
-  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.48);
-  backdrop-filter: blur(22px) saturate(120%);
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  background: rgba(18, 14, 22, 0.55);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
 .dock-copy {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
-  gap: 20px;
+  gap: 4px 12px;
   align-items: baseline;
-  margin-bottom: 14px;
+  margin-bottom: 8px;
+  padding: 4px 8px 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.35;
 }
 
 .dock-copy strong {
-  font-family: "Iowan Old Style", "Baskerville", serif;
-  font-size: 20px;
+  font-size: 13px;
   font-weight: 400;
+  color: rgba(255, 255, 255, 0.55);
 }
 
 .dock-copy span {
-  color: var(--muted);
-  font-size: 11px;
-  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 13px;
+  font-weight: 400;
 }
 
 .dock-actions {
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 10px;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
 }
 
 .primary-action,
 .ghost-action {
-  min-height: 46px;
+  height: 42px;
+  min-height: 42px;
   cursor: pointer;
-  border-radius: 2px;
-  transition: transform 180ms ease, background-color 180ms ease, color 180ms ease;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+  transition: opacity 180ms ease, background-color 180ms ease;
 }
 
 .primary-action {
-  padding: 0 24px;
-  background: var(--paper);
-  color: #120b0d;
-  font-weight: 650;
-  letter-spacing: 0.02em;
+  width: 250px;
+  max-width: 100%;
+  padding: 0 12px;
+  background: #fff;
+  color: rgb(13, 21, 38);
 }
 
 .primary-action:hover {
-  transform: translateY(-2px);
-  background: #fff8ee;
+  opacity: 0.7;
 }
 
 .primary-action:disabled {
   cursor: progress;
-  opacity: 0.52;
-  transform: none;
+  opacity: 0.4;
 }
 
 .ghost-action {
-  padding: 0 16px;
-  border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--muted);
+  min-width: 0;
+  padding: 0 12px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+
+.dock .ghost-action {
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 1.15;
+  text-align: center;
+  white-space: normal;
 }
 
 .ghost-action:hover {
-  color: var(--paper);
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .loading-copy {
@@ -233,8 +224,8 @@ button {
   top: 50%;
   transform: translate(-50%, -50%);
   color: var(--muted);
-  font-size: 12px;
-  letter-spacing: 0.22em;
+  font-size: 13px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -242,7 +233,7 @@ button {
   position: absolute;
   z-index: 11;
   inset: 0;
-  background: rgba(7, 5, 6, 0.42);
+  background: rgba(12, 9, 14, 0.55);
   backdrop-filter: blur(8px);
 }
 
@@ -257,7 +248,7 @@ button {
 
 .result-kicker {
   margin: 0 0 12px;
-  color: var(--ember);
+  color: var(--muted-meta);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.28em;
@@ -266,7 +257,8 @@ button {
 
 .result-panel h2 {
   margin: 0;
-  font-family: "Iowan Old Style", "Baskerville", serif;
+  color: #fff;
+  font-family: var(--font-display), "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", serif;
   font-size: clamp(38px, 5vw, 68px);
   font-weight: 400;
   line-height: 0.95;
@@ -275,7 +267,7 @@ button {
 
 .result-artist {
   margin: 11px 0 22px;
-  color: rgba(243, 234, 220, 0.74);
+  color: rgba(255, 255, 255, 0.74);
   font-size: 17px;
 }
 
@@ -298,14 +290,13 @@ button {
   z-index: 10;
   right: 30px;
   bottom: 22px;
-  color: rgba(243, 234, 220, 0.32);
-  font-size: 9px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  color: var(--muted-clause);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
 }
 
 @media (max-width: 820px) {
-  .brand p,
   .corner-index {
     display: none;
   }

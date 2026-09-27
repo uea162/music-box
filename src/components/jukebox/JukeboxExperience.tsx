@@ -424,11 +424,13 @@ export function JukeboxExperience() {
       return projected.x * projected.x + projected.y * projected.y;
     };
     const paintWall = () => {
+      // A rebuild resets the wall offset, so the previous instance can sit at
+      // the edge or off screen. Always retarget to the copy nearest center.
+      // Clicks inside one breakpoint still keep the card that was clicked.
       const anchorId = selectedIdRef.current ?? playingIdRef.current;
       if (anchorId) {
         selectedInstanceRef.current =
-          closestCard(cards, anchorId, selectedInstanceRef.current, screenCenterDistance)?.instanceIndex ??
-          null;
+          closestCard(cards, anchorId, null, screenCenterDistance)?.instanceIndex ?? null;
       } else {
         selectedInstanceRef.current = null;
       }
@@ -795,6 +797,7 @@ export function JukeboxExperience() {
     setPhase("idle");
     setSelectedId(null);
     setSelectedSong(null);
+    selectedInstanceRef.current = null;
     sceneApiRef.current?.reset();
   }, []);
 

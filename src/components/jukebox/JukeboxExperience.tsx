@@ -62,20 +62,79 @@ const SHADE_SPAN = 0.5;
 const ALPHA_CUTOFF = 0.01;
 
 // Focus, parallax, resize and textures.
+// Preferred zoom; it only shrinks when the card would not fit the free frame.
 const FOCUS_SCALE_WIDE = 1.38;
 const FOCUS_SCALE_COMPACT = 1.1;
-const COMPACT_FOCUS_BELOW_WIDTH = 820;
+// Same breakpoint as `@media (max-width: 820px)` in globals.css.
+const COMPACT_LAYOUT_MAX_WIDTH = 820;
 const FOCUS_GLIDE_RATE = 7.5;
 const FOCUS_SETTLED_UNITS = 0.5;
 const FOCUS_SCALE_RATE = 5;
+// Free frame for a focused or clicked card: viewport minus this margin, minus
+// the result panel plus a gap. Before the panel mounts its box is predicted
+// from the .result-panel rules in globals.css.
+const FOCUS_MARGIN_PX = 16;
+const RESULT_PANEL_GAP_PX = 24;
+const RESULT_PANEL_WIDTH_PX = 390;
+const RESULT_PANEL_EDGE_PX = 21;
+const RESULT_PANEL_BESIDE_CENTER_PX = 205;
+const RESULT_PANEL_COMPACT_TOP_SHARE = 0.5;
+const FIT_SEARCH_STEPS = 18;
 const PARALLAX_SHIFT_X_PX = 10;
 const PARALLAX_SHIFT_Y_PX = 6;
 const PARALLAX_RATE = 2.8;
 const RESIZE_SETTLE_MS = 150;
-const CARD_TEXTURE_WIDTH = 420;
-const CARD_TEXTURE_HEIGHT = 604;
 const MAX_PIXEL_RATIO = 1.6;
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+// [§9] Card face. Fractions are of the texture width unless noted; corner
+// radii follow docs/ACCEPTANCE.md V2 (≈25 px / ≈18 px on the 239 px centre card).
+const CARD_TEXTURE_WIDTH = 420;
+const CARD_TEXTURE_HEIGHT = 604;
+const CARD_EDGE_PX = 2;
+const CARD_CORNER = 0.105;
+const CARD_BASE_COLOR = "#1d1921";
+const CARD_AMBIENCE_SPREAD = 0.12;
+const CARD_AMBIENCE_RESOLUTION = 0.1;
+const CARD_AMBIENCE_FILTER = "blur(2px) saturate(1.55) brightness(0.72)";
+const CARD_AMBIENCE_FALLBACK_ALPHA = 0.55;
+const CARD_SHADE_COLOR = "rgba(14, 10, 16, 0.3)";
+const CARD_FADE_START = 0.35; // of the texture height
+const CARD_FADE_TOP_COLOR = "rgba(14, 10, 16, 0.08)";
+const CARD_FADE_BOTTOM_COLOR = "rgba(14, 10, 16, 0.62)";
+const CARD_ART_INSET = 0.05;
+const CARD_ART_SIZE = 0.9;
+const CARD_ART_CORNER = 0.075;
+const CARD_ART_PLACEHOLDER = "#2a2530";
+// Instrument Serif has a smaller x-height than the reference's grotesque at
+// 5.5%, so the serif title runs larger to read at the same size.
+const CARD_TITLE_SIZE = 0.066;
+const CARD_TITLE_LINE = 1.3;
+const CARD_TITLE_GAP = 0.05;
+const CARD_TITLE_TRACKING = -0.01; // em
+const CARD_TEXT_COLOR = "#ffffff";
+const CARD_SUBTITLE_SIZE = 0.045;
+const CARD_SUBTITLE_LINE = 1.35;
+const CARD_SUBTITLE_COLOR = "rgba(255, 255, 255, 0.56)";
+const CARD_PROGRESS_GAP = 0.05;
+const CARD_PROGRESS_HEIGHT = 0.015;
+const CARD_PROGRESS_TRACK_COLOR = "rgba(255, 255, 255, 0.24)";
+const CARD_PROGRESS_FILL_COLOR = "rgba(255, 255, 255, 0.88)";
+const CARD_TIME_GAP = 0.016;
+const CARD_TIME_SIZE = 0.037;
+const CARD_TIME_COLOR = "rgba(255, 255, 255, 0.5)";
+const CARD_CONTROLS_CENTER = 0.93; // of the texture height
+const CARD_CONTROLS_GAP = 0.1;
+const CARD_CONTROL_SIDE_SIZE = 0.085;
+const CARD_CONTROL_PLAY_SIZE = 0.105;
+const CARD_CONTROL_COLOR = "rgba(255, 255, 255, 0.92)";
+const CARD_BORDER_WIDTH = 0.005;
+const CARD_BORDER_COLOR = "rgba(255, 255, 255, 0.12)";
+const CARD_BORDER_PLAYING_WIDTH = 0.015;
+const CARD_BORDER_PLAYING_COLOR = "rgba(255, 255, 255, 0.88)";
+const CARD_BORDER_SELECTED_WIDTH = 0.022;
+const CARD_BORDER_SELECTED_COLOR = "#ffffff";
+const PREVIEW_SECONDS = 30;
 
 const PALETTES = [
   ["#6f1d2b", "#140b10"],
@@ -86,8 +145,12 @@ const PALETTES = [
   ["#3f5273", "#0b111d"],
 ];
 
-const labelFont =
-  "'Avenir Next', 'PingFang TC', 'PingFang HK', 'PingFang SC', 'Hiragino Sans CNS', 'Hiragino Sans GB', 'Microsoft JhengHei', 'Microsoft YaHei', 'Noto Sans CJK TC', 'Noto Sans CJK SC', sans-serif";
+// Traditional Chinese faces first so 陳奕迅 / 方大同 keep their HK glyphs.
+const CJK_FALLBACK_FONTS =
+  "'PingFang TC', 'PingFang HK', 'PingFang SC', 'Hiragino Sans CNS', 'Hiragino Sans GB', 'Microsoft JhengHei', 'Microsoft YaHei', 'Noto Sans CJK TC', 'Noto Sans CJK SC', sans-serif";
+const HAN_PATTERN = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+const DISPLAY_FONT_VARIABLE = "--font-display";
+const UI_FONT_VARIABLE = "--font-ui";
 
 const cardVertexShader = /* glsl */ `
 uniform float uTurn;
@@ -133,6 +196,7 @@ interface CardTexture {
   texture: THREE.CanvasTexture;
   song: Song;
   image: HTMLImageElement | null;
+  ambience: HTMLCanvasElement | null;
   instanceIndex: number;
   visualState: { playing: boolean; progress: number; selected: boolean };
 }
@@ -344,101 +408,228 @@ function drawCard(
   const { canvas, context: ctx, song, image } = card;
   const width = canvas.width;
   const height = canvas.height;
+  const fonts = cardFonts();
   const palette = PALETTES[Math.abs(Number(song.id.replace(/\D/g, "").slice(-2)) || 0) % PALETTES.length];
+  const faceWidth = width - CARD_EDGE_PX * 2;
+  const faceHeight = height - CARD_EDGE_PX * 2;
+  const corner = width * CARD_CORNER;
 
   ctx.clearRect(0, 0, width, height);
   ctx.save();
   ctx.beginPath();
-  ctx.roundRect(2, 2, width - 4, height - 4, 46);
+  ctx.roundRect(CARD_EDGE_PX, CARD_EDGE_PX, faceWidth, faceHeight, corner);
   ctx.clip();
 
-  const background = ctx.createLinearGradient(0, 0, width, height);
-  background.addColorStop(0, song.accent || palette[0]);
-  background.addColorStop(0.5, palette[0]);
-  background.addColorStop(1, palette[1]);
-  ctx.fillStyle = background;
+  ctx.fillStyle = CARD_BASE_COLOR;
+  ctx.fillRect(0, 0, width, height);
+  const spread = width * CARD_AMBIENCE_SPREAD;
+  if (card.ambience) {
+    ctx.drawImage(card.ambience, -spread, -spread, width + spread * 2, height + spread * 2);
+  } else if (!song.artworkUrl) {
+    const glow = ctx.createLinearGradient(0, 0, width, height);
+    glow.addColorStop(0, song.accent || palette[0]);
+    glow.addColorStop(1, palette[1]);
+    ctx.globalAlpha = CARD_AMBIENCE_FALLBACK_ALPHA;
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, width, height);
+    ctx.globalAlpha = 1;
+  }
+  ctx.fillStyle = CARD_SHADE_COLOR;
+  ctx.fillRect(0, 0, width, height);
+  const fade = ctx.createLinearGradient(0, height * CARD_FADE_START, 0, height);
+  fade.addColorStop(0, CARD_FADE_TOP_COLOR);
+  fade.addColorStop(1, CARD_FADE_BOTTOM_COLOR);
+  ctx.fillStyle = fade;
   ctx.fillRect(0, 0, width, height);
 
-  ctx.fillStyle = "rgba(7, 5, 6, .24)";
-  ctx.fillRect(0, 0, width, height);
-
-  const artX = 28;
-  const artY = 28;
-  const artSize = width - 56;
+  const inset = width * CARD_ART_INSET;
+  const artSize = width * CARD_ART_SIZE;
   ctx.save();
   ctx.beginPath();
-  ctx.roundRect(artX, artY, artSize, artSize, 34);
+  ctx.roundRect(inset, inset, artSize, artSize, width * CARD_ART_CORNER);
   ctx.clip();
-
   if (image?.complete && image.naturalWidth > 0) {
-    ctx.drawImage(image, artX, artY, artSize, artSize);
+    ctx.drawImage(image, inset, inset, artSize, artSize);
+  } else if (song.artworkUrl) {
+    ctx.fillStyle = CARD_ART_PLACEHOLDER;
+    ctx.fillRect(inset, inset, artSize, artSize);
   } else {
     const art = ctx.createRadialGradient(width * 0.64, height * 0.18, 10, width * 0.5, height * 0.28, artSize);
     art.addColorStop(0, "rgba(255, 235, 196, .72)");
     art.addColorStop(0.34, song.accent || palette[0]);
     art.addColorStop(1, palette[1]);
     ctx.fillStyle = art;
-    ctx.fillRect(artX, artY, artSize, artSize);
+    ctx.fillRect(inset, inset, artSize, artSize);
     ctx.strokeStyle = "rgba(255,255,255,.12)";
     ctx.lineWidth = 2;
     for (let ring = 0; ring < 7; ring += 1) {
       ctx.beginPath();
-      ctx.arc(width / 2, artY + artSize / 2, 24 + ring * 24, 0, Math.PI * 2);
+      ctx.arc(width / 2, inset + artSize / 2, 24 + ring * 24, 0, Math.PI * 2);
       ctx.stroke();
     }
   }
   ctx.restore();
 
-  ctx.fillStyle = "#f5ede0";
-  ctx.font = `600 27px ${labelFont}`;
-  ctx.fillText(ellipsize(ctx, song.title, width - 56), 28, 430);
-  ctx.fillStyle = "rgba(245,237,224,.66)";
-  ctx.font = `500 17px ${labelFont}`;
-  ctx.fillText(ellipsize(ctx, song.artist, width - 56), 28, 462);
+  const textWidth = artSize;
+  ctx.textBaseline = "middle";
+  const titleSize = width * CARD_TITLE_SIZE;
+  const titleTop = inset + artSize + width * CARD_TITLE_GAP;
+  const titleLine = titleSize * CARD_TITLE_LINE;
+  ctx.fillStyle = CARD_TEXT_COLOR;
+  ctx.font = `400 ${titleSize}px ${fonts.display}`;
+  ctx.letterSpacing = `${titleSize * CARD_TITLE_TRACKING}px`;
+  ctx.fillText(ellipsize(ctx, song.title, textWidth), inset, titleTop + titleLine / 2);
+  ctx.letterSpacing = "0px";
 
-  ctx.fillStyle = "rgba(245,237,224,.18)";
-  ctx.fillRect(28, 505, width - 56, 5);
-  ctx.fillStyle = state.playing ? "#f5ede0" : "rgba(245,237,224,.48)";
-  ctx.fillRect(28, 505, (width - 56) * Math.max(0.04, state.progress), 5);
+  const subtitleSize = width * CARD_SUBTITLE_SIZE;
+  const subtitleTop = titleTop + titleLine;
+  const subtitleLine = subtitleSize * CARD_SUBTITLE_LINE;
+  ctx.fillStyle = CARD_SUBTITLE_COLOR;
+  ctx.font = `400 ${subtitleSize}px ${fonts.ui}`;
+  ctx.fillText(ellipsize(ctx, song.artist, textWidth), inset, subtitleTop + subtitleLine / 2);
 
-  ctx.font = "500 13px 'Avenir Next', sans-serif";
-  ctx.fillStyle = "rgba(245,237,224,.48)";
-  ctx.fillText(state.playing ? "PLAYING NOW" : "30 SEC PREVIEW", 28, 535);
-
-  ctx.fillStyle = state.playing ? "#f5ede0" : "rgba(245,237,224,.84)";
+  const barTop = subtitleTop + subtitleLine + width * CARD_PROGRESS_GAP;
+  const barHeight = width * CARD_PROGRESS_HEIGHT;
+  ctx.fillStyle = CARD_PROGRESS_TRACK_COLOR;
   ctx.beginPath();
-  if (state.playing) {
-    ctx.fillRect(width / 2 - 11, 548, 8, 25);
-    ctx.fillRect(width / 2 + 4, 548, 8, 25);
-  } else {
-    ctx.moveTo(width / 2 - 8, 546);
-    ctx.lineTo(width / 2 + 15, 560);
-    ctx.lineTo(width / 2 - 8, 574);
-    ctx.closePath();
+  ctx.roundRect(inset, barTop, textWidth, barHeight, barHeight / 2);
+  ctx.fill();
+  if (state.progress > 0) {
+    ctx.fillStyle = CARD_PROGRESS_FILL_COLOR;
+    ctx.beginPath();
+    ctx.roundRect(inset, barTop, Math.max(barHeight, textWidth * Math.min(1, state.progress)), barHeight, barHeight / 2);
     ctx.fill();
   }
 
-  if (state.selected) {
-    ctx.save();
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 11;
-    ctx.shadowColor = "rgba(255, 255, 255, .38)";
-    ctx.shadowBlur = 14;
-    ctx.beginPath();
-    ctx.roundRect(7, 7, width - 14, height - 14, 40);
-    ctx.stroke();
-    ctx.restore();
-  }
+  const timeSize = width * CARD_TIME_SIZE;
+  const timeMiddle = barTop + barHeight + width * CARD_TIME_GAP + timeSize / 2;
+  const elapsed = PREVIEW_SECONDS * Math.min(1, state.progress);
+  ctx.fillStyle = CARD_TIME_COLOR;
+  ctx.font = `500 ${timeSize}px ${fonts.ui}`;
+  ctx.fillText(formatTime(elapsed), inset, timeMiddle);
+  ctx.textAlign = "right";
+  ctx.fillText(`-${formatTime(PREVIEW_SECONDS - elapsed)}`, inset + textWidth, timeMiddle);
+  ctx.textAlign = "left";
 
+  const controlsY = height * CARD_CONTROLS_CENTER;
+  const playSize = width * CARD_CONTROL_PLAY_SIZE;
+  const sideSize = width * CARD_CONTROL_SIDE_SIZE;
+  const sideOffset = playSize / 2 + width * CARD_CONTROLS_GAP + sideSize / 2;
+  ctx.fillStyle = CARD_CONTROL_COLOR;
+  drawSkipIcon(ctx, width / 2 - sideOffset, controlsY, sideSize, -1);
+  drawSkipIcon(ctx, width / 2 + sideOffset, controlsY, sideSize, 1);
+  if (state.playing) {
+    const bar = playSize * 0.22;
+    ctx.beginPath();
+    ctx.roundRect(width / 2 - playSize * 0.3, controlsY - playSize * 0.36, bar, playSize * 0.72, bar * 0.3);
+    ctx.roundRect(width / 2 + playSize * 0.3 - bar, controlsY - playSize * 0.36, bar, playSize * 0.72, bar * 0.3);
+    ctx.fill();
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(width / 2 - playSize * 0.3, controlsY - playSize * 0.38);
+    ctx.lineTo(width / 2 + playSize * 0.38, controlsY);
+    ctx.lineTo(width / 2 - playSize * 0.3, controlsY + playSize * 0.38);
+    ctx.closePath();
+    ctx.fill();
+  }
   ctx.restore();
+
+  const borderWidth =
+    width *
+    (state.selected ? CARD_BORDER_SELECTED_WIDTH : state.playing ? CARD_BORDER_PLAYING_WIDTH : CARD_BORDER_WIDTH);
+  ctx.strokeStyle = state.selected
+    ? CARD_BORDER_SELECTED_COLOR
+    : state.playing
+      ? CARD_BORDER_PLAYING_COLOR
+      : CARD_BORDER_COLOR;
+  ctx.lineWidth = borderWidth;
+  ctx.beginPath();
+  ctx.roundRect(
+    CARD_EDGE_PX + borderWidth / 2,
+    CARD_EDGE_PX + borderWidth / 2,
+    faceWidth - borderWidth,
+    faceHeight - borderWidth,
+    corner - borderWidth / 2,
+  );
+  ctx.stroke();
   card.texture.needsUpdate = true;
+}
+
+function drawSkipIcon(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, direction: 1 | -1) {
+  const half = size / 2;
+  ctx.beginPath();
+  for (const start of [-half, 0]) {
+    ctx.moveTo(x + direction * start, y - half * 0.62);
+    ctx.lineTo(x + direction * (start + half), y);
+    ctx.lineTo(x + direction * start, y + half * 0.62);
+    ctx.closePath();
+  }
+  ctx.fill();
+}
+
+function formatTime(seconds: number) {
+  const whole = Math.max(0, Math.round(seconds));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+}
+
+// A tiny pre-filtered copy of the cover. Upscaling it softens it further, so
+// redrawing the playing card on every progress tick never re-runs a blur.
+function drawAmbience(image: HTMLImageElement) {
+  const ambience = document.createElement("canvas");
+  ambience.width = Math.round(CARD_TEXTURE_WIDTH * CARD_AMBIENCE_RESOLUTION);
+  ambience.height = Math.round(CARD_TEXTURE_HEIGHT * CARD_AMBIENCE_RESOLUTION);
+  const ctx = ambience.getContext("2d");
+  if (!ctx) return null;
+  const cropWidth = Math.min(image.naturalWidth, (image.naturalHeight * ambience.width) / ambience.height);
+  const cropHeight = Math.min(image.naturalHeight, (image.naturalWidth * ambience.height) / ambience.width);
+  ctx.filter = CARD_AMBIENCE_FILTER;
+  ctx.drawImage(
+    image,
+    (image.naturalWidth - cropWidth) / 2,
+    (image.naturalHeight - cropHeight) / 2,
+    cropWidth,
+    cropHeight,
+    0,
+    0,
+    ambience.width,
+    ambience.height,
+  );
+  return ambience;
+}
+
+interface CardFonts {
+  display: string;
+  ui: string;
+}
+
+let cardFontCache: CardFonts | null = null;
+
+// Canvas cannot resolve CSS variables, so read the family names next/font
+// put on <html> and append the Chinese fallbacks.
+function cardFonts(): CardFonts {
+  if (cardFontCache) return cardFontCache;
+  const style = getComputedStyle(document.documentElement);
+  const display = style.getPropertyValue(DISPLAY_FONT_VARIABLE).trim();
+  const ui = style.getPropertyValue(UI_FONT_VARIABLE).trim();
+  const fonts = {
+    display: display ? `${display}, ${CJK_FALLBACK_FONTS}` : CJK_FALLBACK_FONTS,
+    ui: ui ? `${ui}, ${CJK_FALLBACK_FONTS}` : CJK_FALLBACK_FONTS,
+  };
+  if (display && ui) cardFontCache = fonts;
+  return fonts;
+}
+
+function cardFontFaces() {
+  const fonts = cardFonts();
+  return [`400 24px ${fonts.display}`, `400 18px ${fonts.ui}`, `500 16px ${fonts.ui}`];
 }
 
 export function JukeboxExperience() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const facesRef = useRef<CardTexture[]>([]);
-  const sceneApiRef = useRef<{ focus: (songId: string) => void; reset: () => void } | null>(null);
+  const sceneApiRef = useRef<{ focus: (songId: string) => void; refit: () => void; reset: () => void } | null>(null);
+  const resultPanelRef = useRef<HTMLElement>(null);
   const [songs, setSongs] = useState<Song[]>([]);
   const [source, setSource] = useState<"itunes" | "fallback">("fallback");
   const [phase, setPhase] = useState<Phase>("loading");
@@ -540,6 +731,7 @@ export function JukeboxExperience() {
         texture,
         song,
         image: null,
+        ambience: null,
         instanceIndex: -1,
         visualState: { playing: false, progress: 0, selected: false },
       };
@@ -559,11 +751,24 @@ export function JukeboxExperience() {
       return;
     }
     const allFaces = [...faces.values(), activeFace];
+    const fontFaces = cardFontFaces();
+    const fontsPending = !fontFaces.every((font) => document.fonts.check(font));
     allFaces.forEach((face) => {
       drawCard(face, face.visualState);
       renderer.initTexture(face.texture);
     });
     facesRef.current = allFaces;
+    // Faces drawn before the web fonts arrived used fallbacks; redraw every
+    // texture exactly once when they are ready.
+    if (fontsPending) {
+      void Promise.all(fontFaces.map((font) => document.fonts.load(font)))
+        .catch(() => [])
+        .then(() => document.fonts.ready)
+        .then(() => {
+          if (disposed) return;
+          allFaces.forEach((face) => drawCard(face, face.visualState));
+        });
+    }
 
     const artworkImages: HTMLImageElement[] = [];
     faces.forEach((face) => {
@@ -575,9 +780,11 @@ export function JukeboxExperience() {
       image.onload = () => {
         if (disposed) return;
         face.image = image;
+        face.ambience = drawAmbience(image);
         drawCard(face, face.visualState);
         if (activeFace.song.id === face.song.id) {
           activeFace.image = image;
+          activeFace.ambience = face.ambience;
           drawCard(activeFace, activeFace.visualState);
         }
       };
@@ -625,14 +832,21 @@ export function JukeboxExperience() {
       moved: 0,
       samples: [] as Array<{ time: number; x: number; y: number }>,
     };
+    // `songId` is set only by Pick one record; a clicked card that sits
+    // partly off screen glides with `songId` null and keeps (holdX, holdY)
+    // as its remaining offset from the view centre.
     const focus = {
       songId: null as string | null,
       card: null as WallCard | null,
       gliding: false,
+      holdX: 0,
+      holdY: 0,
     };
     let targetScale = 1;
     const parallaxCurrent = new THREE.Vector2();
     const parallaxTarget = new THREE.Vector2();
+    const focusShiftCurrent = new THREE.Vector2();
+    const focusShiftTarget = new THREE.Vector2();
 
     const inertiaActive = () => wallMotion.velocityPan !== 0 || wallMotion.velocityScroll !== 0;
     const stopInertia = () => {
@@ -680,7 +894,9 @@ export function JukeboxExperience() {
       }
 
       if (focus.card && focus.gliding && !pointer.pressed) {
-        const { dx, dy } = cardOffset(focus.card);
+        const offset = cardOffset(focus.card);
+        const dx = offset.dx - focus.holdX;
+        const dy = offset.dy - focus.holdY;
         const share = reducedMotion ? 1 : 1 - Math.exp(-dt * FOCUS_GLIDE_RATE);
         nudge(dx * share, dy * share, null);
         if (Math.abs(dx * (1 - share)) < FOCUS_SETTLED_UNITS && Math.abs(dy * (1 - share)) < FOCUS_SETTLED_UNITS) {
@@ -749,12 +965,12 @@ export function JukeboxExperience() {
       return out;
     };
     const boundsPoint = { x: 0, y: 0 };
-    const cardBounds = (card: WallCard) => {
+    const cardBounds = (card: WallCard, turn = card.turn, tilt = card.tilt) => {
       const bounds = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity };
       for (let u = -0.5; u <= 0.5; u += 0.25) {
         for (let v = -0.5; v <= 0.5; v += 0.25) {
           if (Math.abs(u) !== 0.5 && Math.abs(v) !== 0.5) continue;
-          projectPoint(card.turn + (u * card.width) / view.radius, card.tilt + (v * card.height) / view.radius, boundsPoint);
+          projectPoint(turn + (u * card.width) / view.radius, tilt + (v * card.height) / view.radius, boundsPoint);
           bounds.left = Math.min(bounds.left, boundsPoint.x);
           bounds.right = Math.max(bounds.right, boundsPoint.x);
           bounds.top = Math.min(bounds.top, boundsPoint.y);
@@ -822,6 +1038,7 @@ export function JukeboxExperience() {
       if (!card) return;
       activeFace.song = card.song;
       activeFace.image = faces.get(card.song.id)?.image ?? null;
+      activeFace.ambience = faces.get(card.song.id)?.ambience ?? null;
       card.uniforms.uMap.value = activeFace.texture;
       drawCard(
         activeFace,
@@ -901,6 +1118,9 @@ export function JukeboxExperience() {
       if (focus.songId) {
         const instance = selectedInstanceRef.current;
         focus.card = instance === null ? null : cardByInstance.get(instance) ?? null;
+      } else {
+        focus.card = null;
+        focus.gliding = false;
       }
       syncActiveFace();
     };
@@ -924,6 +1144,53 @@ export function JukeboxExperience() {
       if (signature !== layoutSignature) relayout(nextColumns, signature);
     };
 
+    // Screen area a focused card may use: the viewport minus a margin, minus
+    // the result panel (beside the card on wide screens, below it on compact).
+    const focusFrame = () => {
+      const frame = {
+        left: FOCUS_MARGIN_PX,
+        top: FOCUS_MARGIN_PX,
+        right: view.width - FOCUS_MARGIN_PX,
+        bottom: view.height - FOCUS_MARGIN_PX,
+      };
+      const panel = resultPanelRef.current;
+      if (view.width <= COMPACT_LAYOUT_MAX_WIDTH) {
+        const panelTop = panel ? panel.offsetTop : view.height * RESULT_PANEL_COMPACT_TOP_SHARE;
+        frame.bottom = Math.min(frame.bottom, panelTop - RESULT_PANEL_GAP_PX);
+      } else {
+        const panelWidth = Math.min(RESULT_PANEL_WIDTH_PX, view.width - RESULT_PANEL_EDGE_PX * 2);
+        const panelLeft = panel
+          ? panel.offsetLeft
+          : Math.min(view.width / 2 + RESULT_PANEL_BESIDE_CENTER_PX, view.width - panelWidth - RESULT_PANEL_EDGE_PX);
+        frame.right = Math.min(frame.right, panelLeft - RESULT_PANEL_GAP_PX);
+      }
+      return frame;
+    };
+
+    // Zoom stays at the preferred value unless the centred card would not fit
+    // the frame; the whole wall then shifts on screen (never the wall offsets)
+    // so the card sits inside the frame, nearest to the screen centre.
+    const fitFocus = () => {
+      const card = focus.card;
+      if (!card) return;
+      const frame = focusFrame();
+      const cardWidth = 2 * projectedOffset(view, card.width / 2 / view.radius);
+      const cardHeight = 2 * projectedOffset(view, card.height / 2 / view.radius);
+      const preferred = view.width <= COMPACT_LAYOUT_MAX_WIDTH ? FOCUS_SCALE_COMPACT : FOCUS_SCALE_WIDE;
+      targetScale = Math.max(
+        Number.EPSILON,
+        Math.min(preferred, (frame.right - frame.left) / cardWidth, (frame.bottom - frame.top) / cardHeight),
+      );
+      const halfWidth = (cardWidth * targetScale) / 2;
+      const halfHeight = (cardHeight * targetScale) / 2;
+      const centerX = view.width / 2;
+      const centerY = view.height / 2;
+      focusShiftTarget.set(
+        Math.min(Math.max(centerX, frame.left + halfWidth), frame.right - halfWidth) - centerX,
+        centerY - Math.min(Math.max(centerY, frame.top + halfHeight), frame.bottom - halfHeight),
+      );
+    };
+
     const focusSong = (songId: string) => {
       const card = nearestCopy(songId, selectedInstanceRef.current);
       if (!card) return;
@@ -931,9 +1198,39 @@ export function JukeboxExperience() {
       focus.songId = songId;
       focus.card = card;
       focus.gliding = true;
+      focus.holdX = 0;
+      focus.holdY = 0;
       stopInertia();
-      targetScale = view.width < COMPACT_FOCUS_BELOW_WIDTH ? FOCUS_SCALE_COMPACT : FOCUS_SCALE_WIDE;
+      fitFocus();
       syncActiveFace();
+    };
+
+    // Glides a clicked card only as far as needed to show all of it.
+    const bringIntoView = (card: WallCard) => {
+      if (focus.songId) return;
+      const { dx, dy } = cardOffset(card);
+      const fits = (share: number) => {
+        const bounds = cardBounds(card, (dx * share) / view.radius, (dy * share) / view.radius);
+        return (
+          bounds.left >= FOCUS_MARGIN_PX &&
+          bounds.top >= FOCUS_MARGIN_PX &&
+          bounds.right <= view.width - FOCUS_MARGIN_PX &&
+          bounds.bottom <= view.height - FOCUS_MARGIN_PX
+        );
+      };
+      if (fits(1)) return;
+      let low = 0;
+      let high = 1;
+      for (let step = 0; step < FIT_SEARCH_STEPS; step += 1) {
+        const middle = (low + high) / 2;
+        if (fits(middle)) low = middle;
+        else high = middle;
+      }
+      stopInertia();
+      focus.card = card;
+      focus.gliding = true;
+      focus.holdX = dx * low;
+      focus.holdY = dy * low;
     };
 
     const settleViewport = () => {
@@ -983,6 +1280,7 @@ export function JukeboxExperience() {
       selectedIdRef.current = card.song.id;
       setSelectedId(card.song.id);
       syncActiveFace();
+      bringIntoView(card);
       if (sameInstance && audio && !audio.paused) {
         pausePlayback();
         return;
@@ -1081,11 +1379,15 @@ export function JukeboxExperience() {
 
     sceneApiRef.current = {
       focus: focusSong,
+      refit: fitFocus,
       reset() {
         focus.songId = null;
         focus.card = null;
         focus.gliding = false;
+        focus.holdX = 0;
+        focus.holdY = 0;
         targetScale = 1;
+        focusShiftTarget.set(0, 0);
       },
     };
 
@@ -1104,9 +1406,14 @@ export function JukeboxExperience() {
       } else {
         parallaxCurrent.lerp(parallaxTarget, 1 - Math.exp(-dt * PARALLAX_RATE));
       }
-      group.position.set(parallaxCurrent.x * PARALLAX_SHIFT_X_PX, -parallaxCurrent.y * PARALLAX_SHIFT_Y_PX, 0);
       const zoomShare = reducedMotion ? 1 : 1 - Math.exp(-dt * FOCUS_SCALE_RATE);
       group.scale.setScalar(group.scale.x + (targetScale - group.scale.x) * zoomShare);
+      focusShiftCurrent.lerp(focusShiftTarget, zoomShare);
+      group.position.set(
+        parallaxCurrent.x * PARALLAX_SHIFT_X_PX + focusShiftCurrent.x,
+        -parallaxCurrent.y * PARALLAX_SHIFT_Y_PX + focusShiftCurrent.y,
+        0,
+      );
 
       placeCards();
       syncActiveFace();
@@ -1298,6 +1605,18 @@ export function JukeboxExperience() {
     sceneApiRef.current?.reset();
   }, []);
 
+  // The focus frame was predicted before the panel existed; measure it now.
+  useEffect(() => {
+    if (phase === "reveal") sceneApiRef.current?.refit();
+  }, [phase, selectedSong]);
+
+  // Only Chinese titles get a lang; zh-HK, because zh-Hant resolves to
+  // Noto Sans CJK JP on Linux.
+  const selectedLang =
+    selectedSong && (HAN_PATTERN.test(selectedSong.title) || HAN_PATTERN.test(selectedSong.artist))
+      ? "zh-HK"
+      : undefined;
+
   return (
     <main className="jukebox-shell">
       <canvas
@@ -1328,6 +1647,7 @@ export function JukeboxExperience() {
               exit={{ opacity: 0 }}
             />
             <motion.section
+              ref={resultPanelRef}
               className="result-panel"
               initial={{ opacity: 0, x: 32 }}
               animate={{ opacity: 1, x: 0 }}
@@ -1335,8 +1655,8 @@ export function JukeboxExperience() {
               transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
             >
               <p className="result-kicker">Selected for right now</p>
-              <h2 lang="zh-Hant">{selectedSong.title}</h2>
-              <p className="result-artist" lang="zh-Hant">{selectedSong.artist}</p>
+              <h2 lang={selectedLang}>{selectedSong.title}</h2>
+              <p className="result-artist" lang={selectedLang}>{selectedSong.artist}</p>
               <p className="result-note">
                 A warm, unhurried pick for the room you are in. The recommendation engine comes next;
                 this prototype is proving the wall, the motion and the listening loop.
@@ -1385,8 +1705,12 @@ export function JukeboxExperience() {
         ref={audioRef}
         preload="none"
         onPlay={() => setPlayingId(audioRef.current?.dataset.songId ?? null)}
-        onPause={() => setPlayingId(null)}
+        onPause={() => {
+          playingIdRef.current = null;
+          setPlayingId(null);
+        }}
         onEnded={() => {
+          playingIdRef.current = null;
           setPlayingId(null);
           setProgress(0);
         }}

@@ -576,8 +576,8 @@ export function JukeboxExperience() {
               transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
             >
               <p className="result-kicker">Selected for right now</p>
-              <h2>{selectedSong.title}</h2>
-              <p className="result-artist">{selectedSong.artist}</p>
+              <h2 lang="zh-Hant">{selectedSong.title}</h2>
+              <p className="result-artist" lang="zh-Hant">{selectedSong.artist}</p>
               <p className="result-note">
                 A warm, unhurried pick for the room you are in. The recommendation engine comes next;
                 this prototype is proving the wall, the motion and the listening loop.

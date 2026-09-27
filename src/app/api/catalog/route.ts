@@ -106,10 +106,24 @@ async function songsForTerm({ term, country }: SeedTerm): Promise<Song[]> {
     // Next.js 15.5 only writes fetch Data Cache entries for HTTP 200
     // (patch-fetch.js; docs under cache: force-cache). 403/429/503 are not
     // stored, so a failed term is retried on the next request.
-    if (!response.ok) return [];
+    if (!response.ok) {
+      const failure = new Error("iTunes search failed") as Error & { status: number };
+      failure.status = response.status;
+      throw failure;
+    }
     const data = (await response.json()) as { results?: ITunesTrack[] };
     return songsFromTracks(data.results ?? []);
-  } catch {
+  } catch (error) {
+    const status =
+      typeof error === "object" &&
+      error !== null &&
+      "status" in error &&
+      typeof error.status === "number"
+        ? error.status
+        : undefined;
+    console.warn(
+      `iTunes search failed term=${term} country=${country} status=${status ?? "unavailable"}`,
+    );
     return [];
   }
 }

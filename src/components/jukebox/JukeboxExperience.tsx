@@ -413,26 +413,37 @@ export function JukeboxExperience() {
     });
     cardsRef.current = cards;
 
-    const screenCenterDistance = (card: CardRecord) => {
-      const theta = card.baseX / CYLINDER_RADIUS;
+    const projectCard = (card: CardRecord, offsetX = 0, offsetY = 0) => {
+      const flatX = wrap(card.baseX + offsetX, wallSpan);
+      const y = wrap(card.baseY + offsetY, card.columnSpan);
+      const theta = flatX / CYLINDER_RADIUS;
+      const centerDistance = Math.min(1, Math.abs(flatX) / (wallSpan * 0.5));
+      const depthCurve = Math.pow(centerDistance, 1.25);
       const projected = new THREE.Vector3(
         Math.sin(theta) * CYLINDER_RADIUS,
-        card.baseY,
-        (Math.cos(theta) - 1) * CYLINDER_RADIUS,
+        y,
+        (Math.cos(theta) - 1) * CYLINDER_RADIUS - depthCurve * 1.35 - 0.008 * y * y,
       );
       projected.project(camera);
+      return projected;
+    };
+    const screenCenterDistance = (card: CardRecord) => {
+      const projected = projectCard(card);
       return projected.x * projected.x + projected.y * projected.y;
     };
     const paintWall = () => {
-      // A rebuild resets the wall offset, so the previous instance can sit at
-      // the edge or off screen. Always retarget to the copy nearest center.
+      // A rebuild clears the drag offset, so the clicked instance can sit at
+      // the edge or off screen. Always pick this song's copy nearest center.
       // Clicks inside one breakpoint still keep the card that was clicked.
       const anchorId = selectedIdRef.current ?? playingIdRef.current;
-      if (anchorId) {
-        selectedInstanceRef.current =
-          closestCard(cards, anchorId, null, screenCenterDistance)?.instanceIndex ?? null;
-      } else {
-        selectedInstanceRef.current = null;
+      const chosen = anchorId ? closestCard(cards, anchorId, null, screenCenterDistance) : null;
+      selectedInstanceRef.current = chosen?.instanceIndex ?? null;
+      if (chosen) {
+        const projected = projectCard(chosen);
+        if (Math.abs(projected.x) > 1 || Math.abs(projected.y) > 1) {
+          target.set(-chosen.baseX, -chosen.baseY);
+          current.copy(target);
+        }
       }
       cards.forEach((card) => {
         drawCard(

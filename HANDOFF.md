@@ -93,6 +93,7 @@
   - 服务器端并行请求 8 个 iTunes 搜索词，每个最多 10 首。原有 6 个艺人固定 `US` 商店；陳奕迅、方大同使用 `HK` 商店，以便返回繁体艺人名和可试听曲目。
   - 各词结果按搜索词轮询交错，并按 track id 去重，再截取最多 54 首，避免后加入的艺人被顺序截断丢掉。单个搜索词超时或失败只丢掉该词，其他词照常返回；合并后不足 12 首时才返回本地 fallback。
   - 5 秒超时。成功响应（HTTP 200）按搜索词 revalidate 6 小时；非 2xx 不写入 Data Cache，下次请求会重试。路由本身不设置 `revalidate` 或 `dynamic = "force-static"`。
+  - 服务器环境变量 `ITUNES_SEARCH_URL` 可覆盖 iTunes 搜索地址，不设置时默认为 `https://itunes.apple.com/search`。只在服务端读取，用于把目录请求指到本地假接口做失败和恢复测试；不要用 `NEXT_PUBLIC_` 前缀。
 - `src/app/page.tsx`
   - 首页仅渲染 `<JukeboxExperience />`。
 - `src/app/layout.tsx`

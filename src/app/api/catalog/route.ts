@@ -23,6 +23,12 @@ const SEED_TERMS: SeedTerm[] = [
 ];
 
 const CATALOG_LIMIT = 54;
+const DEFAULT_ITUNES_SEARCH_URL = "https://itunes.apple.com/search";
+
+function itunesSearchUrl() {
+  const configured = process.env.ITUNES_SEARCH_URL?.trim();
+  return configured ? configured : DEFAULT_ITUNES_SEARCH_URL;
+}
 
 const ACCENTS = ["#e05b3f", "#c8923d", "#5f8c83", "#8a6ba8", "#b84d6a", "#667fb8"];
 
@@ -93,14 +99,14 @@ async function songsForTerm({ term, country }: SeedTerm): Promise<Song[]> {
       country,
       limit: "10",
     });
-    const response = await fetch(`https://itunes.apple.com/search?${params}`, {
+    const response = await fetch(`${itunesSearchUrl()}?${params}`, {
       next: { revalidate: 60 * 60 * 6 },
       signal: AbortSignal.timeout(5_000),
     });
-        // Next.js 15.5 only writes fetch Data Cache entries for HTTP 200
-        // (patch-fetch.js; docs under cache: force-cache). 403/429/503 are not
-        // stored, so a failed term is retried on the next request.
-        if (!response.ok) return [];
+    // Next.js 15.5 only writes fetch Data Cache entries for HTTP 200
+    // (patch-fetch.js; docs under cache: force-cache). 403/429/503 are not
+    // stored, so a failed term is retried on the next request.
+    if (!response.ok) return [];
     const data = (await response.json()) as { results?: ITunesTrack[] };
     return songsFromTracks(data.results ?? []);
   } catch {

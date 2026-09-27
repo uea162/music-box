@@ -36,8 +36,19 @@ const PALETTES = [
   ["#3f5273", "#0b111d"],
 ];
 
-function truncate(text: string, max: number) {
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+// Latin stays on Avenir Next / sans-serif. Later families only cover CJK glyphs
+// those fonts lack, so English cards keep the same shapes.
+const CARD_LABEL_FONT =
+  "'Avenir Next', sans-serif, 'PingFang TC', 'PingFang HK', 'Microsoft JhengHei', 'Microsoft YaHei', 'Noto Sans CJK TC', 'Noto Sans CJK HK', 'Noto Sans CJK SC', 'Noto Sans TC', 'Source Han Sans TC', 'WenQuanYi Micro Hei', 'Droid Sans Fallback'";
+
+function ellipsize(ctx: CanvasRenderingContext2D, text: string, maxWidth: number) {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  const ellipsis = "…";
+  let end = text.length;
+  while (end > 0 && ctx.measureText(`${text.slice(0, end)}${ellipsis}`).width > maxWidth) {
+    end -= 1;
+  }
+  return `${text.slice(0, end)}${ellipsis}`;
 }
 
 function seededNumber(value: string) {
@@ -108,11 +119,11 @@ function drawCard(
   ctx.restore();
 
   ctx.fillStyle = "#f5ede0";
-  ctx.font = "600 27px 'Avenir Next', sans-serif";
-  ctx.fillText(truncate(song.title, 23), 28, 430);
+  ctx.font = `600 27px ${CARD_LABEL_FONT}`;
+  ctx.fillText(ellipsize(ctx, song.title, width - 56), 28, 430);
   ctx.fillStyle = "rgba(245,237,224,.66)";
-  ctx.font = "500 17px 'Avenir Next', sans-serif";
-  ctx.fillText(truncate(song.artist, 28), 28, 462);
+  ctx.font = `500 17px ${CARD_LABEL_FONT}`;
+  ctx.fillText(ellipsize(ctx, song.artist, width - 56), 28, 462);
 
   ctx.fillStyle = "rgba(245,237,224,.18)";
   ctx.fillRect(28, 505, width - 56, 5);

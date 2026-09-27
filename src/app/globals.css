@@ -240,7 +240,9 @@ button {
   position: absolute;
   z-index: 14;
   top: 50%;
-  left: calc(50% + 205px);
+  /* Beside the focused card on wide screens; pinned 21px from the right edge
+     once that would push the panel past the viewport (below ~1232px). */
+  left: min(calc(50% + 205px), calc(100% - min(390px, calc(100vw - 42px)) - 21px));
   width: min(390px, calc(100vw - 42px));
   translate: 0 -50%;
 }

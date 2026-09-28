@@ -232,6 +232,7 @@ button {
   position: absolute;
   z-index: 11;
   inset: 0;
+  cursor: pointer;
   background: rgba(12, 9, 14, 0.55);
   backdrop-filter: blur(8px);
 }
@@ -245,6 +246,20 @@ button {
   left: min(calc(50% + 205px), calc(100% - min(390px, calc(100vw - 42px)) - 21px));
   width: min(390px, calc(100vw - 42px));
   translate: 0 -50%;
+  /* Empty space in the panel belongs to the scrim (click = back to the wall);
+     only the text and buttons themselves take clicks. */
+  pointer-events: none;
+}
+
+.result-panel > :not(.result-actions),
+.result-actions > * {
+  pointer-events: auto;
+}
+
+.result-panel > h2,
+.result-panel > p {
+  width: fit-content;
+  max-width: 100%;
 }
 
 .result-kicker {
@@ -326,6 +341,7 @@ button {
 
 .result-back {
   display: block;
+  width: fit-content;
   margin: 18px 0 0 10px;
   padding: 4px 0;
   cursor: pointer;

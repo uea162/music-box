@@ -1966,6 +1966,7 @@ export function JukeboxExperience() {
           <>
             <motion.div
               className="result-scrim"
+              onClick={reset}
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}

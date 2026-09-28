@@ -6,6 +6,10 @@ export interface Song {
   artworkUrl?: string;
   artworkThumbUrl?: string;
   previewUrl?: string;
+  /** Full recording length supplied by the catalog, in milliseconds. */
+  durationMs?: number;
+  /** Position of the preview within the recording, when a source provides it. */
+  previewStartMs?: number;
   externalUrl?: string;
   genre?: string;
   mood?: string;

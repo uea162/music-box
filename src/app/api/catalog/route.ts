@@ -1,5 +1,6 @@
 import { fallbackSongs } from "@/data/fallback-songs";
 import { catalogSnapshot, getCatalogPool } from "@/server/catalog-pool";
+import { withSongDurations } from "@/server/song-duration";
 import type { CatalogPage } from "@/types/song";
 
 export const runtime = "nodejs";
@@ -66,7 +67,7 @@ export async function GET(request: Request) {
     if (snapshot) {
       return page(
         {
-          songs: snapshot.songs,
+          songs: await withSongDurations(snapshot.songs),
           nextCursor: null,
           total: snapshot.songs.length,
           poolVersion: snapshot.version,
@@ -91,7 +92,7 @@ export async function GET(request: Request) {
   const end = offset + limit;
   return page(
     {
-      songs: pool.songs.slice(offset, end),
+      songs: await withSongDurations(pool.songs.slice(offset, end)),
       nextCursor: end < pool.songs.length ? encodeCursor(pool.version, end) : null,
       total: pool.songs.length,
       poolVersion: pool.version,

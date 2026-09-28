@@ -1914,12 +1914,13 @@ export function JukeboxExperience() {
   }, [phase, selectedSong?.id, songs, toggleSong]);
 
   const reset = useCallback(() => {
+    pausePlayback();
     setPhase("idle");
     setSelectedId(null);
     setSelectedSong(null);
     selectedInstanceRef.current = null;
     sceneApiRef.current?.reset();
-  }, []);
+  }, [pausePlayback]);
 
   const restartSelected = useCallback(() => {
     const audio = audioRef.current;

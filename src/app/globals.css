@@ -159,6 +159,22 @@ button {
   font-weight: 400;
 }
 
+.local-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 9px;
+  padding: 0 8px 9px;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.local-context > * + *::before {
+  content: "·";
+  margin-right: 9px;
+  color: rgba(255, 255, 255, 0.3);
+}
+
 .dock-actions {
   display: grid;
   grid-template-columns: 250px minmax(0, 1fr);

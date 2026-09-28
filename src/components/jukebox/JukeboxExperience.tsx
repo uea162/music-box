@@ -7,6 +7,7 @@ import { fallbackSongs } from "@/data/fallback-songs";
 import { songKey } from "@/lib/song-key";
 import type { CatalogPage, CatalogSource, Song } from "@/types/song";
 import type { JukeboxDebugApi } from "./debug";
+import { LocalContext } from "./LocalContext";
 
 type Phase = "loading" | "idle" | "landing" | "reveal";
 type DragScope = "all-columns" | "pressed-column";
@@ -2087,6 +2088,7 @@ export function JukeboxExperience() {
               <strong>Let the room choose.</strong>
               <span>{SOURCE_LABELS[source]}</span>
             </div>
+            <LocalContext />
             <div className="dock-actions">
               <button className="primary-action" onClick={chooseRandom} disabled={phase !== "idle" || !songs.length}>
                 {phase === "landing" ? "Bringing one forward…" : "Pick one record"}

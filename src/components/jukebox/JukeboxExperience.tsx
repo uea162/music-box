@@ -81,7 +81,6 @@ const RESULT_PANEL_WIDTH_PX = 390;
 const RESULT_PANEL_EDGE_PX = 21;
 const RESULT_PANEL_BESIDE_CENTER_PX = 205;
 const RESULT_PANEL_COMPACT_TOP_SHARE = 0.5;
-const FIT_SEARCH_STEPS = 18;
 const PARALLAX_SHIFT_X_PX = 10;
 const PARALLAX_SHIFT_Y_PX = 6;
 const PARALLAX_RATE = 2.8;
@@ -543,21 +542,38 @@ function drawCard(
   ctx.beginPath();
   ctx.roundRect(inset, barTop, textWidth, barHeight, barHeight / 2);
   ctx.fill();
+  const durationSeconds = song.durationMs ? song.durationMs / 1000 : null;
+  const previewStartSeconds = song.previewStartMs != null ? song.previewStartMs / 1000 : null;
+  const elapsed = PREVIEW_SECONDS * Math.min(1, state.progress);
+  if (state.progress > 0 && durationSeconds && previewStartSeconds != null) {
+    ctx.fillStyle = CARD_PROGRESS_FILL_COLOR;
+    ctx.beginPath();
+    const start = previewStartSeconds / durationSeconds;
+    const end = Math.min(1, (previewStartSeconds + elapsed) / durationSeconds);
+    ctx.roundRect(inset + textWidth * start, barTop, Math.max(barHeight, textWidth * (end - start)), barHeight, barHeight / 2);
+    ctx.fill();
+  }
+
+  const previewBarTop = barTop + barHeight + width * CARD_TIME_GAP;
+  ctx.fillStyle = CARD_PROGRESS_TRACK_COLOR;
+  ctx.beginPath();
+  ctx.roundRect(inset, previewBarTop, textWidth, barHeight, barHeight / 2);
+  ctx.fill();
   if (state.progress > 0) {
     ctx.fillStyle = CARD_PROGRESS_FILL_COLOR;
     ctx.beginPath();
-    ctx.roundRect(inset, barTop, Math.max(barHeight, textWidth * Math.min(1, state.progress)), barHeight, barHeight / 2);
+    ctx.roundRect(inset, previewBarTop, Math.max(barHeight, textWidth * Math.min(1, state.progress)), barHeight, barHeight / 2);
     ctx.fill();
   }
 
   const timeSize = width * CARD_TIME_SIZE;
-  const timeMiddle = barTop + barHeight + width * CARD_TIME_GAP + timeSize / 2;
-  const elapsed = PREVIEW_SECONDS * Math.min(1, state.progress);
+  const timeMiddle = previewBarTop + barHeight + width * CARD_TIME_GAP + timeSize / 2;
   ctx.fillStyle = CARD_TIME_COLOR;
   ctx.font = `500 ${timeSize}px ${fonts.ui}`;
-  ctx.fillText(formatTime(elapsed), inset, timeMiddle);
+  ctx.fillText(`试听 ${formatTime(elapsed)}/${formatTime(PREVIEW_SECONDS)}`, inset, timeMiddle);
   ctx.textAlign = "right";
-  ctx.fillText(`-${formatTime(PREVIEW_SECONDS - elapsed)}`, inset + textWidth, timeMiddle);
+  const durationLabel = durationSeconds ? formatTime(durationSeconds) : "—";
+  ctx.fillText(`总长 ${durationLabel} · 起点${previewStartSeconds == null ? "未知" : formatTime(previewStartSeconds)}`, inset + textWidth, timeMiddle);
   ctx.textAlign = "left";
 
   const controlsY = height * CARD_CONTROLS_CENTER;
@@ -1464,32 +1480,14 @@ export function JukeboxExperience() {
       syncActiveFace();
     };
 
-    // Glides a clicked card only as far as needed to show all of it.
-    const bringIntoView = (card: WallCard) => {
-      if (focus.songId) return;
-      const { dx, dy } = cardOffset(card);
-      const fits = (share: number) => {
-        const bounds = cardBounds(card, (dx * share) / view.radius, (dy * share) / view.radius);
-        return (
-          bounds.left >= FOCUS_MARGIN_PX &&
-          bounds.top >= FOCUS_MARGIN_PX &&
-          bounds.right <= view.width - FOCUS_MARGIN_PX &&
-          bounds.bottom <= view.height - FOCUS_MARGIN_PX
-        );
-      };
-      if (fits(1)) return;
-      let low = 0;
-      let high = 1;
-      for (let step = 0; step < FIT_SEARCH_STEPS; step += 1) {
-        const middle = (low + high) / 2;
-        if (fits(middle)) low = middle;
-        else high = middle;
-      }
+    // A clicked copy glides all the way to the centre, even when it is
+    // already fully visible near the edge of the screen.
+    const centreClickedCard = (card: WallCard) => {
       stopInertia();
       focus.card = card;
       focus.gliding = true;
-      focus.holdX = dx * low;
-      focus.holdY = dy * low;
+      focus.holdX = 0;
+      focus.holdY = 0;
     };
 
     const settleViewport = () => {
@@ -1539,7 +1537,7 @@ export function JukeboxExperience() {
       selectedIdRef.current = card.song.id;
       setSelectedId(card.song.id);
       syncActiveFace();
-      bringIntoView(card);
+      centreClickedCard(card);
       if (sameInstance && audio && !audio.paused) {
         pausePlayback();
         return;
@@ -1996,19 +1994,27 @@ export function JukeboxExperience() {
                 <p className="focus-card-title" lang={selectedLang}>
                   {selectedSong.title} • {selectedSong.artist}
                 </p>
-                <p className="focus-card-subtitle">Listening on Music Box</p>
-                <div className="focus-card-progress" aria-hidden="true">
+                <p className="focus-card-subtitle">
+                  整曲 {selectedSong.durationMs ? formatTime(selectedSong.durationMs / 1000) : "时长未知"} · 试听起点{selectedSong.previewStartMs == null ? "未知" : formatTime(selectedSong.previewStartMs / 1000)}
+                </p>
+                <div className="focus-card-progress" aria-label="整首歌曲进度">
                   <span
                     style={{
-                      width: `${(playingId === selectedSong.id ? Math.min(1, progress) : 0) * 100}%`,
+                      width: `${selectedSong.durationMs && selectedSong.previewStartMs != null && playingId === selectedSong.id
+                        ? Math.min(100, (PREVIEW_SECONDS * Math.min(1, progress) / (selectedSong.durationMs / 1000)) * 100)
+                        : 0}%`,
+                      marginLeft: `${selectedSong.durationMs && selectedSong.previewStartMs != null
+                        ? Math.min(100, (selectedSong.previewStartMs / selectedSong.durationMs) * 100)
+                        : 0}%`,
                     }}
                   />
                 </div>
-                <div className="focus-card-time" aria-hidden="true">
-                  <span>{formatTime(PREVIEW_SECONDS * (playingId === selectedSong.id ? Math.min(1, progress) : 0))}</span>
-                  <span>
-                    -{formatTime(PREVIEW_SECONDS * (1 - (playingId === selectedSong.id ? Math.min(1, progress) : 0)))}
-                  </span>
+                <div className="focus-card-progress focus-card-preview-progress" aria-label="试听片段进度">
+                  <span style={{ width: `${(playingId === selectedSong.id ? Math.min(1, progress) : 0) * 100}%` }} />
+                </div>
+                <div className="focus-card-time">
+                  <span>试听 {formatTime(PREVIEW_SECONDS * (playingId === selectedSong.id ? Math.min(1, progress) : 0))}/{formatTime(PREVIEW_SECONDS)}</span>
+                  <span>整曲 {selectedSong.durationMs ? formatTime(selectedSong.durationMs / 1000) : "—"}</span>
                 </div>
                 <div className="focus-card-controls">
                   <button type="button" aria-label="从头播放" onClick={restartSelected}>

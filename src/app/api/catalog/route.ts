@@ -1,4 +1,5 @@
 import { fallbackSongs } from "@/data/fallback-songs";
+import { recommendationSongs } from "@/data/recommendation-songs";
 import { catalogSnapshot, getCatalogPool } from "@/server/catalog-pool";
 import type { CatalogPage } from "@/types/song";
 
@@ -67,6 +68,7 @@ export async function GET(request: Request) {
       return page(
         {
           songs: snapshot.songs,
+          recommendationSongs,
           nextCursor: null,
           total: snapshot.songs.length,
           poolVersion: snapshot.version,
@@ -78,6 +80,7 @@ export async function GET(request: Request) {
     return page(
       {
         songs: fallbackSongs,
+        recommendationSongs,
         nextCursor: null,
         total: fallbackSongs.length,
         poolVersion: "fallback",
@@ -92,6 +95,7 @@ export async function GET(request: Request) {
   return page(
     {
       songs: pool.songs.slice(offset, end),
+      ...(offset === 0 ? { recommendationSongs } : {}),
       nextCursor: end < pool.songs.length ? encodeCursor(pool.version, end) : null,
       total: pool.songs.length,
       poolVersion: pool.version,

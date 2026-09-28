@@ -8,6 +8,7 @@ export interface Song {
   previewUrl?: string;
   externalUrl?: string;
   genre?: string;
+  mood?: string;
   storefront?: string;
   accent: string;
 }
@@ -16,6 +17,7 @@ export type CatalogSource = "itunes" | "snapshot" | "fallback";
 
 export interface CatalogPage {
   songs: Song[];
+  recommendationSongs?: Song[];
   nextCursor: string | null;
   total: number;
   poolVersion: string;

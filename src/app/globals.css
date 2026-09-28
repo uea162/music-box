@@ -119,7 +119,7 @@ button {
   z-index: 12;
   left: 50%;
   bottom: clamp(18px, 4vw, 42px);
-  width: min(376px, calc(100vw - 28px));
+  width: min(410px, calc(100vw - 28px));
   transform: translateX(-50%);
 }
 
@@ -161,7 +161,7 @@ button {
 
 .dock-actions {
   display: grid;
-  grid-template-columns: 250px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 112px;
   gap: 8px;
   align-items: center;
 }
@@ -181,7 +181,7 @@ button {
 }
 
 .primary-action {
-  width: 250px;
+  width: 100%;
   max-width: 100%;
   padding: 0 12px;
   background: #fff;
@@ -216,6 +216,59 @@ button {
   background: rgba(255, 255, 255, 0.1);
 }
 
+.ghost-action:disabled {
+  cursor: wait;
+  opacity: 0.45;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.analysis-panel {
+  position: absolute;
+  z-index: 14;
+  top: 50%;
+  right: clamp(20px, 5vw, 72px);
+  width: min(390px, calc(100vw - 40px));
+  padding: 24px;
+  transform: translateY(-50%);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 18px;
+  background: rgba(18, 14, 22, 0.88);
+  box-shadow: 0 16px 46px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(14px);
+}
+
+.analysis-scene,
+.result-scene {
+  color: #fff;
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.analysis-status,
+.analysis-error {
+  margin: 18px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.analysis-error { margin-bottom: 16px; }
+.result-scene { margin: 0 0 24px; }
+
+.match-details { margin: 0 0 24px; color: rgba(255, 255, 255, 0.8); font-size: 13px; }
+.match-details strong { color: #fff; }
+.match-alternatives-label { margin: 18px 0 8px; color: var(--muted); }
+.match-details ol { margin: 0; padding-left: 20px; }
+.match-details li { padding: 4px 0; }
+.match-details li span:last-child { float: right; margin-left: 10px; color: #fff; }
+
 .loading-copy {
   position: absolute;
   z-index: 11;
@@ -245,6 +298,8 @@ button {
      once that would push the panel past the viewport (below ~1232px). */
   left: min(calc(50% + 205px), calc(100% - min(390px, calc(100vw - 42px)) - 21px));
   width: min(390px, calc(100vw - 42px));
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
   translate: 0 -50%;
   /* Empty space in the panel belongs to the scrim (click = back to the wall);
      only the text and buttons themselves take clicks. */
@@ -521,6 +576,7 @@ button {
     bottom: 116px;
     left: 20px;
     width: auto;
+    max-height: calc(100dvh - 140px);
     translate: none;
   }
 
@@ -542,7 +598,7 @@ button {
   }
 
   .dock-actions {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) 104px;
   }
 
   .dock .primary-action {
@@ -550,8 +606,10 @@ button {
   }
 
   .dock .ghost-action {
-    display: none;
+    display: block;
   }
+
+  .analysis-panel { top: auto; bottom: 120px; left: 20px; right: 20px; width: auto; transform: none; }
 
   .source-note {
     display: none;

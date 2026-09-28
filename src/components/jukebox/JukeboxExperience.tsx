@@ -680,9 +680,12 @@ export function JukeboxExperience() {
     focus: (songId: string) => void;
     refit: () => void;
     reset: () => void;
-    visibleSongs: () => Song[];
+    visibleCards: () => Array<{ song: Song; instanceIndex: number }>;
   } | null>(null);
   const resultPanelRef = useRef<HTMLElement>(null);
+  // Sharp copy of the focused card above the result scrim; the scene sets its
+  // box every frame to the projected bounds of the focused 3D card.
+  const focusCardRef = useRef<HTMLDivElement>(null);
   // `songs` is the first catalog page and builds the scene once; later pages
   // are fetched and appended by the scene itself (see `commitPage`).
   const [songs, setSongs] = useState<Song[]>([]);
@@ -1644,15 +1647,41 @@ export function JukeboxExperience() {
         targetScale = 1;
         focusShiftTarget.set(0, 0);
       },
-      // Pick one record chooses among songs already on screen, so the focus
-      // glide never sweeps across a wall that is many screens wide.
-      visibleSongs() {
-        const seen = new Map<string, Song>();
+      // Pick one record chooses among full-width cards already on screen, so
+      // the focus glide never sweeps across a wall that is many screens wide
+      // and the focused card is never a narrow half card.
+      visibleCards() {
+        const seen = new Map<string, { song: Song; instanceIndex: number }>();
         cards.forEach((card) => {
-          if (card.visible) seen.set(card.song.id, card.song);
+          if (card.visible && card.shift === 0 && !seen.has(card.song.id)) {
+            seen.set(card.song.id, { song: card.song, instanceIndex: card.instanceIndex });
+          }
         });
         return [...seen.values()];
       },
+    };
+
+    const syncFocusCard = () => {
+      const overlay = focusCardRef.current;
+      if (!overlay) return;
+      const card = focus.songId ? focus.card : null;
+      if (!card || !card.visible) {
+        overlay.style.visibility = "hidden";
+        return;
+      }
+      const bounds = cardBounds(card);
+      const box = [bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top].map((value) =>
+        value.toFixed(1),
+      );
+      const key = box.join(",");
+      if (overlay.dataset.box !== key) {
+        overlay.dataset.box = key;
+        overlay.style.left = `${box[0]}px`;
+        overlay.style.top = `${box[1]}px`;
+        overlay.style.width = `${box[2]}px`;
+        overlay.style.height = `${box[3]}px`;
+      }
+      overlay.style.visibility = "visible";
     };
 
     let frame = 0;
@@ -1683,6 +1712,7 @@ export function JukeboxExperience() {
 
       placeCards();
       syncActiveFace();
+      syncFocusCard();
       if (frameCount % FACE_SWEEP_EVERY_FRAMES === 0) sweepFaces();
       renderer.render(scene, camera);
     };
@@ -1867,11 +1897,13 @@ export function JukeboxExperience() {
 
   const chooseRandom = useCallback(() => {
     if (!songs.length || phase === "landing") return;
-    const nearby = sceneApiRef.current?.visibleSongs() ?? [];
-    const candidates = nearby.length ? nearby : songs;
-    const pool = candidates.filter((song) => song.id !== selectedSong?.id);
-    const song = pool[Math.floor(Math.random() * pool.length)] ?? candidates[0];
-    selectedInstanceRef.current = null;
+    const nearby = sceneApiRef.current?.visibleCards() ?? [];
+    const candidates = nearby.length ? nearby : songs.map((song) => ({ song, instanceIndex: null }));
+    const pool = candidates.filter((candidate) => candidate.song.id !== selectedSong?.id);
+    const pick = pool[Math.floor(Math.random() * pool.length)] ?? candidates[0];
+    const song = pick.song;
+    // focus() glides to this copy of the song when it still exists.
+    selectedInstanceRef.current = pick.instanceIndex;
     selectedIdRef.current = song.id;
     setPhase("landing");
     setSelectedId(song.id);
@@ -1888,6 +1920,13 @@ export function JukeboxExperience() {
     selectedInstanceRef.current = null;
     sceneApiRef.current?.reset();
   }, []);
+
+  const restartSelected = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio || !selectedSong) return;
+    if (audio.dataset.songId === selectedSong.id) audio.currentTime = 0;
+    if (audio.paused || audio.dataset.songId !== selectedSong.id) void toggleSong(selectedSong);
+  }, [selectedSong, toggleSong]);
 
   // The focus frame was predicted before the panel existed; measure it now.
   useEffect(() => {
@@ -1930,6 +1969,72 @@ export function JukeboxExperience() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
             />
+            <div ref={focusCardRef} className="focus-card-anchor" style={{ visibility: "hidden" }}>
+              <motion.article
+                className="focus-card"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.35 }}
+              >
+                {selectedSong.artworkUrl ? (
+                  <div
+                    className="focus-card-ambience"
+                    style={{ backgroundImage: `url(${JSON.stringify(selectedSong.artworkUrl)})` }}
+                    aria-hidden="true"
+                  />
+                ) : null}
+                <div className="focus-card-art">
+                  {selectedSong.artworkUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- remote iTunes artwork, already sized by the CDN
+                    <img src={selectedSong.artworkUrl} alt="" />
+                  ) : null}
+                </div>
+                <p className="focus-card-title" lang={selectedLang}>
+                  {selectedSong.title} • {selectedSong.artist}
+                </p>
+                <p className="focus-card-subtitle">Listening on Music Box</p>
+                <div className="focus-card-progress" aria-hidden="true">
+                  <span
+                    style={{
+                      width: `${(playingId === selectedSong.id ? Math.min(1, progress) : 0) * 100}%`,
+                    }}
+                  />
+                </div>
+                <div className="focus-card-time" aria-hidden="true">
+                  <span>{formatTime(PREVIEW_SECONDS * (playingId === selectedSong.id ? Math.min(1, progress) : 0))}</span>
+                  <span>
+                    -{formatTime(PREVIEW_SECONDS * (1 - (playingId === selectedSong.id ? Math.min(1, progress) : 0)))}
+                  </span>
+                </div>
+                <div className="focus-card-controls">
+                  <button type="button" aria-label="从头播放" onClick={restartSelected}>
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M11 6 3 12l8 6zM21 6l-8 6 8 6z" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    className="focus-card-play"
+                    aria-label={playingId === selectedSong.id ? "暂停" : "播放"}
+                    onClick={() => void toggleSong(selectedSong)}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      {playingId === selectedSong.id ? (
+                        <path d="M6 4h4v16H6zM14 4h4v16h-4z" />
+                      ) : (
+                        <path d="M7 4v16l13-8z" />
+                      )}
+                    </svg>
+                  </button>
+                  <button type="button" aria-label="换一首" onClick={chooseRandom}>
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="m3 6 8 6-8 6zM13 6l8 6-8 6z" />
+                    </svg>
+                  </button>
+                </div>
+              </motion.article>
+            </div>
             <motion.section
               ref={resultPanelRef}
               className="result-panel"
@@ -1946,14 +2051,23 @@ export function JukeboxExperience() {
                 this prototype is proving the wall, the motion and the listening loop.
               </p>
               <div className="result-actions">
-                <button className="primary-action" onClick={chooseRandom}>Another record</button>
+                <button type="button" className="result-action result-action-primary" onClick={chooseRandom}>
+                  <span aria-hidden="true">↻</span> Another record
+                </button>
                 {selectedSong.externalUrl ? (
-                  <a className="ghost-action" href={selectedSong.externalUrl} target="_blank" rel="noreferrer">
-                    Open in Apple Music ↗
+                  <a
+                    className="result-action result-action-secondary"
+                    href={selectedSong.externalUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Apple Music <span aria-hidden="true">↗</span>
                   </a>
                 ) : null}
-                <button className="ghost-action" onClick={reset}>Back to the wall</button>
               </div>
+              <button type="button" className="result-back" onClick={reset}>
+                Back to the wall
+              </button>
             </motion.section>
           </>
         ) : null}

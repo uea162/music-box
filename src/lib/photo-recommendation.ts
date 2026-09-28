@@ -96,19 +96,14 @@ async function askJev(scene: string, candidates: Song[], signal: AbortSignal): P
 export async function chooseSong(scene: string, songs: Song[], signal: AbortSignal): Promise<SongMatch> {
   if (!songs.length) throw new Error("曲目尚未加载，请稍后重试");
   const batches: Song[][] = [];
-  for (let start = 0; start < songs.length; start += 200) batches.push(songs.slice(start, start + 200));
+  for (let start = 0; start < songs.length; start += 255) batches.push(songs.slice(start, start + 255));
   if (batches.length === 1) return askJev(scene, batches[0], signal);
 
   // Every catalog track enters a first-round choice. The best four from each
   // batch then compete in a final choice, keeping every Jev call below 255.
-  const shortlists: Song[][] = new Array(batches.length);
-  let nextBatch = 0;
-  await Promise.all(Array.from({ length: Math.min(3, batches.length) }, async () => {
-    while (nextBatch < batches.length) {
-      const index = nextBatch++;
-      const result = await askJev(scene, batches[index], signal);
-      shortlists[index] = [result.song, ...result.alternatives.map((item) => item.song)];
-    }
+  const shortlists = await Promise.all(batches.map(async (batch) => {
+    const result = await askJev(scene, batch, signal);
+    return [result.song, ...result.alternatives.map((item) => item.song)];
   }));
   return askJev(scene, shortlists.flat(), signal);
 }

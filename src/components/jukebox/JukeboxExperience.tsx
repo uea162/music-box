@@ -698,7 +698,6 @@ export function JukeboxExperience() {
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedSong, setSelectedSong] = useState<Song | null>(null);
-  const [sceneText, setSceneText] = useState("");
   const [photoStatus, setPhotoStatus] = useState<"idle" | "reading" | "choosing" | "done" | "image-error" | "song-error">("idle");
   const [photoError, setPhotoError] = useState("");
   const [match, setMatch] = useState<SongMatch | null>(null);
@@ -1904,7 +1903,6 @@ export function JukeboxExperience() {
     const pick = pool[Math.floor(Math.random() * pool.length)] ?? candidates[0];
     const song = pick.song;
     setMatch(null);
-    setSceneText("");
     setPhotoStatus("idle");
     // focus() glides to this copy of the song when it still exists.
     selectedInstanceRef.current = pick.instanceIndex;
@@ -1924,7 +1922,6 @@ export function JukeboxExperience() {
     const run = ++photoRunRef.current;
     photoStartedRef.current = Date.now();
     setElapsed(0);
-    setSceneText("");
     setPhotoError("");
     setMatch(null);
     setPhotoStatus("reading");
@@ -1935,27 +1932,29 @@ export function JukeboxExperience() {
     selectedInstanceRef.current = null;
     sceneApiRef.current?.reset();
 
+    // Catalog loading runs beside image resizing and Gemini instead of after them.
+    const catalogPromise = fetch("/api/recommendation-catalog", { signal: controller.signal })
+      .then(async (response) => response.ok ? await response.json() as { songs?: Song[] } : null)
+      .catch(() => null);
+
     let scene: string;
     try {
       const image = await jpegForGemini(file);
       if (controller.signal.aborted) return;
-      scene = await describeScene(image, controller.signal, (text) => {
-        if (run === photoRunRef.current) setSceneText(text);
-      });
+      scene = await describeScene(image, controller.signal, () => {});
     } catch (error) {
       if (controller.signal.aborted) return;
+      controller.abort();
       setPhotoError(error instanceof Error ? error.message : "读图失败，请重试");
       setPhotoStatus("image-error");
       return;
     }
 
     if (controller.signal.aborted) return;
-    setSceneText(scene);
     setPhotoStatus("choosing");
     try {
-      const catalogResponse = await fetch("/api/recommendation-catalog", { signal: controller.signal });
-      if (!catalogResponse.ok) throw new Error("曲库暂时不可用，请重试");
-      const catalog = await catalogResponse.json() as { songs?: Song[] };
+      const catalog = await catalogPromise;
+      if (!catalog) throw new Error("曲库暂时不可用，请重试");
       const result = await chooseSong(scene, catalog.songs ?? [], controller.signal);
       if (controller.signal.aborted || run !== photoRunRef.current) return;
       setMatch(result);
@@ -1966,6 +1965,7 @@ export function JukeboxExperience() {
       setSelectedSong(result.song);
       setPhase("landing");
       sceneApiRef.current?.focus(result.song.id);
+      void toggleSong(result.song);
       window.setTimeout(() => {
         if (run === photoRunRef.current) setPhase("reveal");
       }, 760);
@@ -1974,14 +1974,13 @@ export function JukeboxExperience() {
       setPhotoError(error instanceof Error ? error.message : "选歌失败，请重试");
       setPhotoStatus("song-error");
     }
-  }, [pausePlayback]);
+  }, [pausePlayback, toggleSong]);
 
   const reset = useCallback(() => {
     photoRequestRef.current?.abort();
     photoRunRef.current += 1;
     setPhotoStatus("idle");
     setMatch(null);
-    setSceneText("");
     pausePlayback();
     setPhase("idle");
     setSelectedId(null);
@@ -2041,21 +2040,6 @@ export function JukeboxExperience() {
           if (file) void handlePhoto(file);
         }}
       />
-
-      {(photoStatus === "reading" || photoStatus === "choosing" || photoStatus === "image-error" || photoStatus === "song-error") && (
-        <section className="analysis-panel" aria-live="polite">
-          <p className="result-kicker">Photo to music</p>
-          {sceneText ? <p className="analysis-scene">{sceneText}</p> : null}
-          {photoStatus === "reading" || photoStatus === "choosing" ? (
-            <p className="analysis-status">{photoStatus === "reading" ? "正在读图" : "正在选歌"} · 已过 {elapsed} 秒</p>
-          ) : (
-            <>
-              <p className="analysis-error">{photoStatus === "image-error" ? "读图失败" : "选歌失败"}：{photoError}</p>
-              <button type="button" className="result-action" onClick={() => photoInputRef.current?.click()}>换张照片</button>
-            </>
-          )}
-        </section>
-      )}
 
       <AnimatePresence>
         {phase === "reveal" && selectedSong ? (
@@ -2141,7 +2125,6 @@ export function JukeboxExperience() {
               exit={{ opacity: 0, x: 24 }}
               transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
             >
-              {match && sceneText ? <p className="result-scene">{sceneText}</p> : null}
               {match && selectedSong.artworkUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element -- catalog artwork is already CDN sized
                 <img className="result-artwork" src={selectedSong.artworkUrl} alt="" />
@@ -2197,6 +2180,13 @@ export function JukeboxExperience() {
               <span>{SOURCE_LABELS[source]}</span>
             </div>
             <LocalContext />
+            {(photoStatus === "reading" || photoStatus === "choosing" || photoStatus === "image-error" || photoStatus === "song-error") && (
+              <p className={`dock-photo-status${photoStatus.endsWith("error") ? " is-error" : ""}`} role="status">
+                {photoStatus === "reading" ? `正在读图 · 已过 ${elapsed} 秒` :
+                  photoStatus === "choosing" ? `正在选歌 · 已过 ${elapsed} 秒` :
+                    `${photoStatus === "image-error" ? "读图失败" : "选歌失败"}：${photoError}`}
+              </p>
+            )}
             <div className="dock-actions">
               <button className="primary-action" onClick={chooseRandom} disabled={phase !== "idle" || !songs.length}>
                 {phase === "landing" ? "Bringing one forward…" : "Pick one record"}

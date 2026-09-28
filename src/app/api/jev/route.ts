@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     if (!data || typeof data !== "object") throw new Error("Invalid request");
     const value = data as Record<string, unknown>;
     if (typeof value.scene !== "string" || !value.scene.trim() || value.scene.length > 500 ||
-      !Array.isArray(value.songIds) || value.songIds.length < 1 || value.songIds.length > 200 ||
+      !Array.isArray(value.songIds) || value.songIds.length < 1 || value.songIds.length > 255 ||
       value.songIds.some((id) => typeof id !== "string" || id.length > 100) ||
       new Set(value.songIds).size !== value.songIds.length) throw new Error("Invalid request");
     scene = value.scene.trim();

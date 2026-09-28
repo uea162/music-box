@@ -697,7 +697,6 @@ export function JukeboxExperience() {
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedSong, setSelectedSong] = useState<Song | null>(null);
-  const [recommendationSongs, setRecommendationSongs] = useState<Song[]>([]);
   const [sceneText, setSceneText] = useState("");
   const [photoStatus, setPhotoStatus] = useState<"idle" | "reading" | "choosing" | "done" | "image-error" | "song-error">("idle");
   const [photoError, setPhotoError] = useState("");
@@ -731,10 +730,7 @@ export function JukeboxExperience() {
       .then((data: Partial<CatalogPage>) => {
         if (cancelled) return;
         firstCursorRef.current = data.songs?.length ? data.nextCursor ?? null : null;
-        const pageSongs = data.songs?.length ? data.songs : fallbackSongs;
-        const curated = data.recommendationSongs ?? [];
-        setRecommendationSongs(curated);
-        setSongs([...curated, ...pageSongs.filter((song) => !curated.some((item) => item.id === song.id))]);
+        setSongs(data.songs?.length ? data.songs : fallbackSongs);
         setSource(data.source ?? "fallback");
         setPhase("idle");
       })
@@ -1956,7 +1952,10 @@ export function JukeboxExperience() {
     setSceneText(scene);
     setPhotoStatus("choosing");
     try {
-      const result = await chooseSong(scene, recommendationSongs, controller.signal);
+      const catalogResponse = await fetch("/api/recommendation-catalog", { signal: controller.signal });
+      if (!catalogResponse.ok) throw new Error("曲库暂时不可用，请重试");
+      const catalog = await catalogResponse.json() as { songs?: Song[] };
+      const result = await chooseSong(scene, catalog.songs ?? [], controller.signal);
       if (controller.signal.aborted || run !== photoRunRef.current) return;
       setMatch(result);
       setPhotoStatus("done");
@@ -1974,7 +1973,7 @@ export function JukeboxExperience() {
       setPhotoError(error instanceof Error ? error.message : "选歌失败，请重试");
       setPhotoStatus("song-error");
     }
-  }, [pausePlayback, recommendationSongs]);
+  }, [pausePlayback]);
 
   const reset = useCallback(() => {
     photoRequestRef.current?.abort();
@@ -2142,13 +2141,17 @@ export function JukeboxExperience() {
               transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
             >
               {match && sceneText ? <p className="result-scene">{sceneText}</p> : null}
+              {match && selectedSong.artworkUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element -- catalog artwork is already CDN sized
+                <img className="result-artwork" src={selectedSong.artworkUrl} alt="" />
+              ) : null}
               <p className="result-kicker">Selected for right now</p>
               <h2 lang={selectedLang}>{selectedSong.title}</h2>
               <p className="result-artist" lang={selectedLang}>{selectedSong.artist}</p>
               {match ? (
                 <div className="match-details">
-                  <p>匹配概率 <strong>{percent(match.probability)}</strong> · 把握 <strong>{typeof match.confidence === "number" ? percent(match.confidence) : match.confidence}</strong></p>
-                  <p className="match-alternatives-label">概率次高的 3 首</p>
+                  <p>匹配概率（决选） <strong>{percent(match.probability)}</strong> · 把握 <strong>{typeof match.confidence === "number" ? percent(match.confidence) : match.confidence}</strong></p>
+                  <p className="match-alternatives-label">决选概率次高的 3 首</p>
                   <ol>
                     {match.alternatives.map(({ song, probability }) => (
                       <li key={song.id}><span>{song.title} · {song.artist}</span><span>{percent(probability)}</span></li>
@@ -2196,7 +2199,7 @@ export function JukeboxExperience() {
               <button className="primary-action" onClick={chooseRandom} disabled={phase !== "idle" || !songs.length}>
                 {phase === "landing" ? "Bringing one forward…" : "Pick one record"}
               </button>
-              <button className="ghost-action" onClick={() => photoInputRef.current?.click()} disabled={!recommendationSongs.length}>
+              <button className="ghost-action" onClick={() => photoInputRef.current?.click()} disabled={!songs.length}>
                 上传照片
               </button>
             </div>

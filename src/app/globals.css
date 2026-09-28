@@ -261,6 +261,7 @@ button {
 
 .analysis-error { margin-bottom: 16px; }
 .result-scene { margin: 0 0 24px; }
+.result-artwork { display: block; width: 72px; height: 72px; margin-bottom: 20px; border-radius: 9px; object-fit: cover; }
 
 .match-details { margin: 0 0 24px; color: rgba(255, 255, 255, 0.8); font-size: 13px; }
 .match-details strong { color: #fff; }

@@ -11,7 +11,7 @@ npm run dev
 
 打开 `http://localhost:3000`。
 
-上传照片功能需要在项目根目录创建 `.env.local`，填入 `GEMINI_API_KEY` 和 `TYPESAFE_API_KEY`（变量名见 `.env.example`）。密钥只在服务端使用。上传后浏览器会先将图片缩到最长边 512 像素并转为 JPEG，Gemini 流式返回一句画面描述，然后 Jev 从项目固定曲目中选歌。
+上传照片功能需要在项目根目录创建 `.env.local`，填入 `GEMINI_API_KEY` 和 `TYPESAFE_API_KEY`（变量名见 `.env.example`）。密钥只在服务端使用。上传后浏览器会先将图片缩到最长边 512 像素并转为 JPEG，Gemini 流式返回一句画面描述。Jev 从当前曲库中选歌；曲库超过 255 首时分组初选，再对每组优胜曲目做最终选择。
 
 ## 验证
 

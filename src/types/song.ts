@@ -17,7 +17,6 @@ export type CatalogSource = "itunes" | "snapshot" | "fallback";
 
 export interface CatalogPage {
   songs: Song[];
-  recommendationSongs?: Song[];
   nextCursor: string | null;
   total: number;
   poolVersion: string;

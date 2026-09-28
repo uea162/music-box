@@ -4,7 +4,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { fallbackSongs } from "@/data/fallback-songs";
-import type { Song } from "@/types/song";
+import { songKey } from "@/lib/song-key";
+import type { CatalogPage, CatalogSource, Song } from "@/types/song";
 import type { JukeboxDebugApi } from "./debug";
 
 type Phase = "loading" | "idle" | "landing" | "reveal";
@@ -87,6 +88,28 @@ const RESIZE_SETTLE_MS = 150;
 const MAX_PIXEL_RATIO = 1.6;
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 
+// Catalog paging (docs/DYNAMIC-SONG-LOADING.md §4). New pages become extra
+// columns appended at the right end of the wall, the way [§1] describes.
+// Distances in screens are multiples of `view.width / view.scale` wall units.
+const SONGS_PER_EXTRA_COLUMN = 14.4;
+const EXTRA_SHUFFLE_SEED = 1921;
+const LOAD_AHEAD_SCREENS = 1; // request when the seam is this far past the culling reach
+const LOAD_REARM_SCREENS = 0.5; // horizontal travel needed after a commit before the next request
+const MAX_LOADED_SONGS = 1200;
+const MAX_EMPTY_PAGES = 3;
+const LOAD_TIMEOUT_MS = 8000;
+const LOAD_RETRY_BASE_MS = 2000;
+const LOAD_MAX_RETRIES = 3;
+const LOAD_COOLDOWN_MS = 60000;
+const CULL_SEARCH_STEPS = 24;
+// Shared card textures are created when a card first becomes visible and
+// the least recently used are released above the cap (not counting the
+// active texture). Selected, playing and focused songs are never released.
+const MAX_FACES_WIDE = 200;
+const MAX_FACES_COMPACT = 110;
+const FACE_SWEEP_EVERY_FRAMES = 120;
+const FACE_IDLE_FRAMES = 60;
+
 // [§9] Card face. Fractions are of the texture width unless noted; corner
 // radii follow docs/ACCEPTANCE.md V2 (≈25 px / ≈18 px on the 239 px centre card).
 const CARD_TEXTURE_WIDTH = 420;
@@ -135,6 +158,11 @@ const CARD_BORDER_PLAYING_COLOR = "rgba(255, 255, 255, 0.88)";
 const CARD_BORDER_SELECTED_WIDTH = 0.022;
 const CARD_BORDER_SELECTED_COLOR = "#ffffff";
 const PREVIEW_SECONDS = 30;
+const SOURCE_LABELS: Record<CatalogSource, string> = {
+  itunes: "Live catalog · 30 sec previews",
+  snapshot: "Saved catalog · 30 sec previews",
+  fallback: "Offline study catalog",
+};
 
 const PALETTES = [
   ["#6f1d2b", "#140b10"],
@@ -199,6 +227,7 @@ interface CardTexture {
   ambience: HTMLCanvasElement | null;
   instanceIndex: number;
   visualState: { playing: boolean; progress: number; selected: boolean };
+  lastUsedFrame: number;
 }
 
 interface WallSlot {
@@ -324,14 +353,18 @@ function addSlot(column: WallColumn, songs: Song[]) {
   column.length += height + WALL_GAP;
 }
 
-function buildBaseColumns(songs: Song[]) {
-  let cursor = 0;
-  const columns: WallColumn[] = COLUMN_WIDTHS.map((width, index) => {
+// Columns `startIndex …` laid out left to right from `startX`; widths cycle
+// through COLUMN_WIDTHS. Returns the new right edge (the next wall width).
+function buildColumns(songs: Song[], startIndex: number, count: number, startX: number, seed: number) {
+  let cursor = startX;
+  const columns: WallColumn[] = Array.from({ length: count }, (_, offset) => {
+    const index = startIndex + offset;
+    const width = COLUMN_WIDTHS[index % COLUMN_WIDTHS.length];
     const column = { index, width, x: cursor + width / 2, length: 0, slots: [] };
     cursor += width + WALL_GAP;
     return column;
   });
-  const queue = shuffleSongs(songs, SHUFFLE_SEED);
+  const queue = shuffleSongs(songs, seed);
   let next = 0;
   while (next < queue.length) {
     let target = columns[0];
@@ -343,6 +376,21 @@ function buildBaseColumns(songs: Song[]) {
     next += take;
   }
   return { columns, wallWidth: cursor };
+}
+
+function buildBaseColumns(songs: Song[]) {
+  return buildColumns(songs, 0, COLUMN_WIDTHS.length, 0, SHUFFLE_SEED);
+}
+
+function buildExtraColumns(songs: Song[], startIndex: number, startX: number, seed: number) {
+  return buildColumns(songs, startIndex, Math.ceil(songs.length / SONGS_PER_EXTRA_COLUMN), startX, seed);
+}
+
+function grownFloat64(source: Float64Array<ArrayBuffer>, length: number) {
+  if (source.length >= length) return source;
+  const next = new Float64Array(length);
+  next.set(source);
+  return next;
 }
 
 function hasSong(songs: Song[], song: Song) {
@@ -627,11 +675,20 @@ function cardFontFaces() {
 export function JukeboxExperience() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
-  const facesRef = useRef<CardTexture[]>([]);
-  const sceneApiRef = useRef<{ focus: (songId: string) => void; refit: () => void; reset: () => void } | null>(null);
+  const facesRef = useRef(new Set<CardTexture>());
+  const sceneApiRef = useRef<{
+    focus: (songId: string) => void;
+    refit: () => void;
+    reset: () => void;
+    visibleSongs: () => Song[];
+  } | null>(null);
   const resultPanelRef = useRef<HTMLElement>(null);
+  // `songs` is the first catalog page and builds the scene once; later pages
+  // are fetched and appended by the scene itself (see `commitPage`).
   const [songs, setSongs] = useState<Song[]>([]);
-  const [source, setSource] = useState<"itunes" | "fallback">("fallback");
+  const firstCursorRef = useRef<string | null>(null);
+  const [loadedCount, setLoadedCount] = useState(0);
+  const [source, setSource] = useState<CatalogSource>("fallback");
   const [phase, setPhase] = useState<Phase>("loading");
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -657,8 +714,9 @@ export function JukeboxExperience() {
     let cancelled = false;
     fetch("/api/catalog")
       .then((response) => response.json())
-      .then((data: { songs?: Song[]; source?: "itunes" | "fallback" }) => {
+      .then((data: Partial<CatalogPage>) => {
         if (cancelled) return;
+        firstCursorRef.current = data.songs?.length ? data.nextCursor ?? null : null;
         setSongs(data.songs?.length ? data.songs : fallbackSongs);
         setSource(data.source ?? "fallback");
         setPhase("idle");
@@ -734,30 +792,36 @@ export function JukeboxExperience() {
         ambience: null,
         instanceIndex: -1,
         visualState: { playing: false, progress: 0, selected: false },
+        lastUsedFrame: 0,
       };
     };
-    const faces = new Map<string, CardTexture>();
+
+    const wallSongs: Song[] = [];
+    const loadedIds = new Set<string>();
+    const loadedKeys = new Set<string>();
     songs.forEach((song) => {
-      if (faces.has(song.id)) return;
-      const face = createFace(song);
-      if (face) faces.set(song.id, face);
+      if (loadedIds.has(song.id) || loadedKeys.has(songKey(song))) return;
+      loadedIds.add(song.id);
+      loadedKeys.add(songKey(song));
+      wallSongs.push(song);
     });
-    const wallSongs = [...faces.values()].map((face) => face.song);
     const activeFace = createFace(wallSongs[0] ?? songs[0]);
     if (!activeFace || wallSongs.length === 0) {
-      faces.forEach((face) => face.texture.dispose());
       activeFace?.texture.dispose();
       geometry.dispose();
       return;
     }
-    const allFaces = [...faces.values(), activeFace];
+    drawCard(activeFace, activeFace.visualState);
+    renderer.initTexture(activeFace.texture);
+    facesRef.current = new Set([activeFace]);
+    setLoadedCount(loadedIds.size);
+
+    // Shared faces live only while cards of that song are on screen; see
+    // `acquireFace` / `sweepFaces`.
+    const faces = new Map<string, CardTexture>();
+    let frameCount = 0;
     const fontFaces = cardFontFaces();
     const fontsPending = !fontFaces.every((font) => document.fonts.check(font));
-    allFaces.forEach((face) => {
-      drawCard(face, face.visualState);
-      renderer.initTexture(face.texture);
-    });
-    facesRef.current = allFaces;
     // Faces drawn before the web fonts arrived used fallbacks; redraw every
     // texture exactly once when they are ready.
     if (fontsPending) {
@@ -766,20 +830,18 @@ export function JukeboxExperience() {
         .then(() => document.fonts.ready)
         .then(() => {
           if (disposed) return;
-          allFaces.forEach((face) => drawCard(face, face.visualState));
+          facesRef.current.forEach((face) => drawCard(face, face.visualState));
         });
     }
 
-    const artworkImages: HTMLImageElement[] = [];
-    faces.forEach((face) => {
+    const loadArtwork = (face: CardTexture) => {
       const url = face.song.artworkUrl;
       if (!url) return;
       const image = new Image();
       image.crossOrigin = "anonymous";
-      artworkImages.push(image);
+      face.image = image;
       image.onload = () => {
-        if (disposed) return;
-        face.image = image;
+        if (disposed || faces.get(face.song.id) !== face) return;
         face.ambience = drawAmbience(image);
         drawCard(face, face.visualState);
         if (activeFace.song.id === face.song.id) {
@@ -790,10 +852,56 @@ export function JukeboxExperience() {
       };
       image.onerror = () => {};
       image.src = url;
-    });
+    };
+    const acquireFace = (song: Song) => {
+      let face = faces.get(song.id);
+      if (!face) {
+        const created = createFace(song);
+        if (!created) return null;
+        face = created;
+        faces.set(song.id, face);
+        facesRef.current.add(face);
+        drawCard(face, face.visualState);
+        renderer.initTexture(face.texture);
+        loadArtwork(face);
+      }
+      face.lastUsedFrame = frameCount;
+      return face;
+    };
+    const releaseFace = (face: CardTexture) => {
+      if (face.image) {
+        face.image.onload = null;
+        face.image.onerror = null;
+        face.image.src = "";
+      }
+      face.texture.dispose();
+      faces.delete(face.song.id);
+      facesRef.current.delete(face);
+    };
+    const facesCap = () => (view.width <= COMPACT_LAYOUT_MAX_WIDTH ? MAX_FACES_COMPACT : MAX_FACES_WIDE);
+    const sweepFaces = () => {
+      const excess = faces.size - facesCap();
+      if (excess <= 0) return;
+      const kept = new Set([selectedIdRef.current, playingIdRef.current, focus.songId, activeCard?.song.id]);
+      const idle = [...faces.values()]
+        .filter((face) => !kept.has(face.song.id) && frameCount - face.lastUsedFrame >= FACE_IDLE_FRAMES)
+        .sort((a, b) => a.lastUsedFrame - b.lastUsedFrame)
+        .slice(0, excess);
+      if (!idle.length) return;
+      const released = new Set<THREE.Texture>(idle.map((face) => face.texture));
+      idle.forEach(releaseFace);
+      cards.forEach((card) => {
+        if (card.uniforms.uMap.value && released.has(card.uniforms.uMap.value)) card.uniforms.uMap.value = null;
+      });
+    };
 
     const base = buildBaseColumns(wallSongs);
-    const wallWidth = base.wallWidth;
+    let baseColumns = base.columns;
+    let wallWidth = base.wallWidth;
+    // Commits re-base the camera into the wall's first lap so a wider wall
+    // wraps every visible column to where it already is; see `commitPage`.
+    let wallOrigin = 0;
+    let seamClearUnits = 0;
     let view = makeView(1, 1);
     let columns: WallColumn[] = base.columns;
     let layoutSignature = "";
@@ -813,10 +921,10 @@ export function JukeboxExperience() {
       speed: reducedMotion ? STOPPED_SPEED : INTRO_SPEED,
       distance: 0,
       pan: 0,
-      scroll: new Float64Array(COLUMN_WIDTHS.length),
+      scroll: new Float64Array(baseColumns.length),
       pendingPan: 0,
       pendingScrollAll: 0,
-      pendingScroll: new Float64Array(COLUMN_WIDTHS.length),
+      pendingScroll: new Float64Array(baseColumns.length),
       velocityPan: 0,
       velocityScroll: 0,
       velocityColumn: null as number | null,
@@ -869,7 +977,7 @@ export function JukeboxExperience() {
       START_OFFSET_STEP * index +
       (index % 2 === 0 ? 1 : -1) * COLUMN_SPEEDS[index % COLUMN_SPEEDS.length] * wallMotion.distance +
       wallMotion.scroll[index];
-    const cameraX = () => columns[CENTER_COLUMN % columns.length].x + wallMotion.pan;
+    const cameraX = () => columns[CENTER_COLUMN % columns.length].x + wallMotion.pan - wallOrigin;
     const cardOffset = (card: WallCard) => {
       const column = columns[card.column];
       return {
@@ -913,26 +1021,49 @@ export function JukeboxExperience() {
       wallMotion.pendingScrollAll = 0;
     };
 
-    const columnTurn = new Float64Array(COLUMN_WIDTHS.length);
-    const columnCos = new Float64Array(COLUMN_WIDTHS.length);
-    const columnShown = new Uint8Array(COLUMN_WIDTHS.length);
-    const columnOffsets = new Float64Array(COLUMN_WIDTHS.length);
+    let columnTurn = new Float64Array(baseColumns.length);
+    let columnCos = new Float64Array(baseColumns.length);
+    let columnShown = new Uint8Array(baseColumns.length);
+    let columnOffsets = new Float64Array(baseColumns.length);
+    const growColumnBuffers = (length: number) => {
+      wallMotion.scroll = grownFloat64(wallMotion.scroll, length);
+      wallMotion.pendingScroll = grownFloat64(wallMotion.pendingScroll, length);
+      columnTurn = grownFloat64(columnTurn, length);
+      columnCos = grownFloat64(columnCos, length);
+      columnOffsets = grownFloat64(columnOffsets, length);
+      if (columnShown.length < length) columnShown = new Uint8Array(length);
+    };
+    const columnVisible = (dx: number, width: number) => {
+      const turn = dx / view.radius;
+      return (
+        Math.abs(turn) <= MAX_CARD_ANGLE &&
+        Math.cos(turn) >= view.horizon &&
+        projectedOffset(view, turn) <= CULL_MARGIN * view.width + view.scale * width
+      );
+    };
+    // Largest column-centre distance at which any column can still be drawn.
+    // A seam farther than this from the view is off screen on both sides.
+    const cullReach = () => {
+      const width = Math.max(...COLUMN_WIDTHS);
+      let low = 0;
+      let high = MAX_CARD_ANGLE * view.radius;
+      if (columnVisible(high, width)) return high;
+      for (let step = 0; step < CULL_SEARCH_STEPS; step += 1) {
+        const middle = (low + high) / 2;
+        if (columnVisible(middle, width)) low = middle;
+        else high = middle;
+      }
+      return high;
+    };
     const placeCards = () => {
       const { radius, horizon, scale } = view;
       const viewX = cameraX();
       columns.forEach((column) => {
         const dx = wrap(column.x - viewX, wallWidth);
-        const turn = dx / radius;
-        const cos = Math.cos(turn);
         columnTurn[column.index] = dx;
-        columnCos[column.index] = cos;
+        columnCos[column.index] = Math.cos(dx / radius);
         columnOffsets[column.index] = columnOffset(column.index);
-        columnShown[column.index] =
-          Math.abs(turn) <= MAX_CARD_ANGLE &&
-          cos >= horizon &&
-          projectedOffset(view, turn) <= CULL_MARGIN * view.width + scale * column.width
-            ? 1
-            : 0;
+        columnShown[column.index] = columnVisible(dx, column.width) ? 1 : 0;
       });
       cards.forEach((card) => {
         const column = columns[card.column];
@@ -946,7 +1077,14 @@ export function JukeboxExperience() {
           Math.abs(tilt) <= MAX_CARD_ANGLE &&
           Math.cos(tilt) * cosTurn >= horizon &&
           projectedOffset(view, tilt, cosTurn) <= CULL_MARGIN * view.height + scale * card.height;
-        card.mesh.visible = card.visible;
+        if (card.visible) {
+          const face = acquireFace(card.song);
+          if (card !== activeCard) {
+            const texture = face?.texture ?? null;
+            if (card.uniforms.uMap.value !== texture) card.uniforms.uMap.value = texture;
+          }
+        }
+        card.mesh.visible = card.visible && card.uniforms.uMap.value !== null;
         card.uniforms.uTurn.value = card.turn;
         card.uniforms.uTilt.value = card.tilt;
       });
@@ -1032,13 +1170,14 @@ export function JukeboxExperience() {
       const index = selectedInstanceRef.current;
       const card = index === null ? null : cardByInstance.get(index) ?? null;
       if (card === activeCard) return;
-      if (activeCard) activeCard.uniforms.uMap.value = faces.get(activeCard.song.id)?.texture ?? null;
+      if (activeCard) activeCard.uniforms.uMap.value = acquireFace(activeCard.song)?.texture ?? null;
       activeCard = card;
       activeFace.instanceIndex = card?.instanceIndex ?? -1;
       if (!card) return;
+      const face = acquireFace(card.song);
       activeFace.song = card.song;
-      activeFace.image = faces.get(card.song.id)?.image ?? null;
-      activeFace.ambience = faces.get(card.song.id)?.ambience ?? null;
+      activeFace.image = face?.image ?? null;
+      activeFace.ambience = face?.ambience ?? null;
       card.uniforms.uMap.value = activeFace.texture;
       drawCard(
         activeFace,
@@ -1139,9 +1278,125 @@ export function JukeboxExperience() {
       sharedUniforms.uRadius.value = view.radius;
       sharedUniforms.uSphere.value = view.sphere;
       sharedUniforms.uHorizon.value = view.horizon;
-      const nextColumns = extendColumns(base.columns, (MIN_LOOP_SCREENS * view.height) / view.scale);
+      seamClearUnits = cullReach() + WALL_GAP;
+      layoutWall();
+    };
+
+    const layoutWall = () => {
+      const nextColumns = extendColumns(baseColumns, (MIN_LOOP_SCREENS * view.height) / view.scale);
       const signature = nextColumns.map((column) => column.slots.length).join(",");
       if (signature !== layoutSignature) relayout(nextColumns, signature);
+    };
+
+    // Paging. The wall has one seam: the left edge of column 0, which is also
+    // the right edge of the last column. New columns go in at the seam (after
+    // the last column), so no existing column moves. A page is requested
+    // when the seam comes near and committed only while the seam is beyond
+    // `seamClearUnits` on both sides, so nothing on screen wraps differently.
+    // Motion is untouched: loading never nudges the wall or changes speed.
+    const catalog = {
+      cursor: firstCursorRef.current,
+      request: null as AbortController | null,
+      timeout: 0,
+      ready: [] as Song[],
+      pages: 1,
+      failures: 0,
+      retryAt: 0,
+      emptyPages: 0,
+      // With reduced motion only a drag may start a load, so even the first
+      // prefetch waits for horizontal travel.
+      armed: !reducedMotion,
+      travel: 0,
+      lastPan: 0,
+    };
+    const screenUnits = () => view.width / view.scale;
+    const seamDistance = () => Math.abs(wrap(-cameraX(), wallWidth));
+
+    const requestPage = (cursor: string) => {
+      const controller = new AbortController();
+      catalog.request = controller;
+      catalog.timeout = window.setTimeout(() => controller.abort(), LOAD_TIMEOUT_MS);
+      fetch(`/api/catalog?cursor=${encodeURIComponent(cursor)}`, { signal: controller.signal })
+        .then((response) => {
+          if (!response.ok) throw new Error(`catalog ${response.status}`);
+          return response.json() as Promise<CatalogPage>;
+        })
+        .then((page) => {
+          if (disposed) return;
+          catalog.failures = 0;
+          catalog.cursor = page.nextCursor ?? null;
+          const ids = new Set<string>();
+          const keys = new Set<string>();
+          const added = (page.songs ?? []).filter((song) => {
+            const key = songKey(song);
+            if (loadedIds.has(song.id) || loadedKeys.has(key) || ids.has(song.id) || keys.has(key)) return false;
+            ids.add(song.id);
+            keys.add(key);
+            return true;
+          });
+          if (added.length) {
+            catalog.ready = added;
+            catalog.emptyPages = 0;
+          } else {
+            catalog.emptyPages += 1;
+            if (catalog.emptyPages >= MAX_EMPTY_PAGES) catalog.cursor = null;
+          }
+        })
+        .catch(() => {
+          if (disposed) return;
+          catalog.failures += 1;
+          const now = performance.now();
+          if (catalog.failures > LOAD_MAX_RETRIES) {
+            catalog.failures = 0;
+            catalog.retryAt = now + LOAD_COOLDOWN_MS;
+          } else {
+            catalog.retryAt = now + LOAD_RETRY_BASE_MS * 2 ** (catalog.failures - 1);
+          }
+        })
+        .finally(() => {
+          window.clearTimeout(catalog.timeout);
+          if (catalog.request === controller) catalog.request = null;
+        });
+    };
+
+    const commitPage = () => {
+      const added = catalog.ready.slice(0, Math.max(0, MAX_LOADED_SONGS - loadedIds.size));
+      catalog.ready = [];
+      if (!added.length) return;
+      const lap = cameraX() - (((cameraX() % wallWidth) + wallWidth) % wallWidth);
+      wallOrigin += lap;
+      const extra = buildExtraColumns(added, baseColumns.length, wallWidth, EXTRA_SHUFFLE_SEED + catalog.pages);
+      baseColumns = [...baseColumns, ...extra.columns];
+      wallWidth = extra.wallWidth;
+      catalog.pages += 1;
+      added.forEach((song) => {
+        loadedIds.add(song.id);
+        loadedKeys.add(songKey(song));
+      });
+      growColumnBuffers(baseColumns.length);
+      catalog.armed = false;
+      catalog.travel = 0;
+      layoutWall();
+      setLoadedCount(loadedIds.size);
+    };
+
+    const stepCatalog = (now: number) => {
+      catalog.travel += Math.abs(wallMotion.pan - catalog.lastPan);
+      catalog.lastPan = wallMotion.pan;
+      if (!catalog.armed && catalog.travel >= LOAD_REARM_SCREENS * screenUnits()) catalog.armed = true;
+      const seam = seamDistance();
+      if (catalog.ready.length && seam > seamClearUnits) commitPage();
+      if (
+        catalog.armed &&
+        catalog.cursor &&
+        !catalog.request &&
+        !catalog.ready.length &&
+        loadedIds.size < MAX_LOADED_SONGS &&
+        now >= catalog.retryAt &&
+        seam < seamClearUnits + LOAD_AHEAD_SCREENS * screenUnits()
+      ) {
+        requestPage(catalog.cursor);
+      }
     };
 
     // Screen area a focused card may use: the viewport minus a margin, minus
@@ -1389,6 +1644,15 @@ export function JukeboxExperience() {
         targetScale = 1;
         focusShiftTarget.set(0, 0);
       },
+      // Pick one record chooses among songs already on screen, so the focus
+      // glide never sweeps across a wall that is many screens wide.
+      visibleSongs() {
+        const seen = new Map<string, Song>();
+        cards.forEach((card) => {
+          if (card.visible) seen.set(card.song.id, card.song);
+        });
+        return [...seen.values()];
+      },
     };
 
     let frame = 0;
@@ -1399,7 +1663,9 @@ export function JukeboxExperience() {
       const dt = THREE.MathUtils.clamp((now - lastFrameTime) / 1000, 0, MAX_FRAME_SECONDS);
       lastFrameTime = Math.max(lastFrameTime, now);
 
+      frameCount += 1;
       stepMotion(dt);
+      stepCatalog(now);
 
       if (reducedMotion || pointer.pressed) {
         if (reducedMotion) parallaxCurrent.set(0, 0);
@@ -1417,6 +1683,7 @@ export function JukeboxExperience() {
 
       placeCards();
       syncActiveFace();
+      if (frameCount % FACE_SWEEP_EVERY_FRAMES === 0) sweepFaces();
       renderer.render(scene, camera);
     };
     activeAnimationLoopCount += 1;
@@ -1476,6 +1743,23 @@ export function JukeboxExperience() {
             };
           });
         },
+        catalog() {
+          return {
+            loaded: loadedIds.size,
+            pages: catalog.pages,
+            pending: catalog.request !== null,
+            ready: catalog.ready.length,
+            hasNext: catalog.cursor !== null,
+            armed: catalog.armed,
+            retryAt: catalog.retryAt,
+            columns: baseColumns.length,
+            wallWidth,
+            seamDistance: seamDistance(),
+            seamClear: seamClearUnits,
+            faces: faces.size,
+            facesCap: facesCap(),
+          };
+        },
         motion() {
           return {
             targetSpeed: wallMotion.targetSpeed,
@@ -1508,23 +1792,21 @@ export function JukeboxExperience() {
       canvas.removeEventListener("wheel", onWheel);
       resizeObserver.disconnect();
       mediaQuery.removeEventListener("change", onReducedMotionChange);
-      artworkImages.forEach((image) => {
-        image.onload = null;
-        image.onerror = null;
-        image.src = "";
-      });
+      catalog.request?.abort();
+      window.clearTimeout(catalog.timeout);
       meshPool.forEach(({ mesh }) => {
         mesh.material.uniforms.uMap.value = null;
         mesh.material.dispose();
       });
       meshPool.length = 0;
-      allFaces.forEach((face) => face.texture.dispose());
+      [...faces.values()].forEach(releaseFace);
+      activeFace.texture.dispose();
       geometry.dispose();
       group.clear();
       scene.clear();
       cards = [];
       cardByInstance.clear();
-      facesRef.current = [];
+      facesRef.current = new Set();
       sceneApiRef.current = null;
     };
   // Rebuild only when the catalog changes. Resizing rescales the wall in
@@ -1585,8 +1867,10 @@ export function JukeboxExperience() {
 
   const chooseRandom = useCallback(() => {
     if (!songs.length || phase === "landing") return;
-    const pool = songs.filter((song) => song.id !== selectedSong?.id);
-    const song = pool[Math.floor(Math.random() * pool.length)] ?? songs[0];
+    const nearby = sceneApiRef.current?.visibleSongs() ?? [];
+    const candidates = nearby.length ? nearby : songs;
+    const pool = candidates.filter((song) => song.id !== selectedSong?.id);
+    const song = pool[Math.floor(Math.random() * pool.length)] ?? candidates[0];
     selectedInstanceRef.current = null;
     selectedIdRef.current = song.id;
     setPhase("landing");
@@ -1632,7 +1916,7 @@ export function JukeboxExperience() {
 
       <div className="corner-index" aria-hidden="true">
         <span />
-        <span>{songs.length || "—"} records in rotation</span>
+        <span>{loadedCount || "—"} records in rotation</span>
       </div>
 
       {phase === "loading" ? <p className="loading-copy">Cataloguing the room</p> : null}
@@ -1685,7 +1969,7 @@ export function JukeboxExperience() {
           >
             <div className="dock-copy">
               <strong>Let the room choose.</strong>
-              <span>{source === "itunes" ? "Live catalog · 30 sec previews" : "Offline study catalog"}</span>
+              <span>{SOURCE_LABELS[source]}</span>
             </div>
             <div className="dock-actions">
               <button className="primary-action" onClick={chooseRandom} disabled={phase !== "idle" || !songs.length}>

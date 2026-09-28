@@ -106,11 +106,13 @@ lint、生产构建与 TypeScript 检查均通过。
 - `src/app/layout.tsx`
   - 全局 metadata、`zh-CN` HTML 和全局 CSS。
   - 用 `next/font/google` 引入 Instrument Serif 与 Bricolage Grotesque，并以 CSS 变量 `--font-display`、`--font-ui` 暴露。见 3.6。
-- `src/app/api/catalog/route.ts`
-  - 服务器端并行请求 8 个 iTunes 搜索词，每个最多 10 首。原有 6 个艺人固定 `US` 商店；陳奕迅、方大同使用 `HK` 商店，以便返回繁体艺人名和可试听曲目。
-  - 各词结果按搜索词轮询交错，并按 track id 去重，再截取最多 54 首，避免后加入的艺人被顺序截断丢掉。单个搜索词超时或失败只丢掉该词，其他词照常返回；合并后不足 12 首时才返回本地 fallback。
-  - 5 秒超时。成功响应（HTTP 200）按搜索词 revalidate 6 小时；非 2xx 不写入 Data Cache，下次请求会重试。路由本身不设置 `revalidate` 或 `dynamic = "force-static"`。
-  - 服务器环境变量 `ITUNES_SEARCH_URL` 可覆盖 iTunes 搜索地址，不设置时默认为 `https://itunes.apple.com/search`。只在服务端读取，用于把目录请求指到本地假接口做失败和恢复测试；不要用 `NEXT_PUBLIC_` 前缀。
+- `src/app/api/catalog/route.ts` + `src/server/catalog-pool.ts`（设计见 `docs/DYNAMIC-SONG-LOADING.md`）
+  - 分页接口：`GET /api/catalog` 返回第 1 页，`?cursor=<上一页 nextCursor>` 返回后续页；`limit` 默认 96，夹到 24–144。响应是 `CatalogPage`（`songs`、`nextCursor`（到底为 null）、`total`、`poolVersion`、`source`）。cursor 是 `base64url(JSON{v, pool, offset})`，客户端只透传；伪造或曲池版本不一致时不报错，按 offset 在当前曲池上切片。
+  - 构池：16 个种子搜索词 + 4 个商店（US / HK / JP / TW）各 10 个 iTunes RSS 分类榜，并发 6、单请求 5 秒超时。英文 6 位艺人用 `US` 商店；中文艺人（陳奕迅、方大同用 `HK`，林俊傑、鄧紫棋、周杰倫、李榮浩、孫燕姿、蔡依林、五月天、陶喆用 `TW`）用港台商店，返回繁体名和可试听曲目（`CN` 商店没有音乐）。
+  - 种子结果按词轮询交错取 96 首固定排在最前（即第 1 页），其后各榜轮询交错；按 track id 和 `lower(title)|lower(artist)`（`src/lib/song-key.ts`）双重去重，过滤无试听，截到 1200 首。曲池在服务端内存缓存 6 小时（有来源失败时 5 分钟后重建）；上游 HTTP 200 进 Data Cache 6 小时，非 2xx 不缓存。
+  - 回退：曲池不足 12 首时，第 1 页返回 `src/data/catalog-snapshot.json`（200 首，`source: "snapshot"`，`nextCursor: null`）；快照也不可用才返回 18 首 fallback。带 cursor 的请求在曲池不可用时返回 503 + `Retry-After`。回退和 503 响应 `Cache-Control: no-store`，正常页 `public, s-maxage=600, stale-while-revalidate=3600`。
+  - 快照用 `npm run dev` 起服务后 `npm run catalog:snapshot`（`scripts/build-catalog-snapshot.mjs`）重新生成；试听和封面 URL 会轮换，失效时重跑。
+  - 仅服务端读取的环境变量（不要加 `NEXT_PUBLIC_`）：`ITUNES_SEARCH_URL`（默认 `https://itunes.apple.com/search`）、`ITUNES_RSS_URL`（默认 `https://itunes.apple.com`）用于把上游指到本地假接口做失败测试；`CATALOG_SNAPSHOT_DISABLED=1` 用于测试最后一层 fallback。
 - `src/app/page.tsx`
   - 首页仅渲染 `<JukeboxExperience />`。
 - `src/data/fallback-songs.ts`
@@ -237,6 +239,13 @@ X = S*cos(b)*sin(a);  Y = -S*sin(b);  Z = S*(cos(a)*cos(b) - 1);
 | `PARALLAX_SHIFT_X_PX` / `PARALLAX_SHIFT_Y_PX` / `PARALLAX_RATE` | `10` / `6` / `2.8` /s | 视差 |
 | `RESIZE_SETTLE_MS` | `150` | 缩放停止后多久做重新聚焦 / 重新居中 |
 | `CARD_TEXTURE_WIDTH` / `CARD_TEXTURE_HEIGHT` | `420` / `604` | 每张卡片纹理 |
+| `MAX_FACES_WIDE` / `MAX_FACES_COMPACT` | `200` / `110` | 共享纹理上限（宽 > 820 / ≤ 820），不含白框卡专用纹理 |
+| `FACE_SWEEP_EVERY_FRAMES` / `FACE_IDLE_FRAMES` | `120` / `60` | 每 120 帧回收一次，只回收 ≥ 60 帧没被可见卡用过的 |
+| `SONGS_PER_EXTRA_COLUMN` / `EXTRA_SHUFFLE_SEED` | `14.4` / `1921` | 每页追加 `ceil(歌数 / 14.4)` 列；第 n 页洗牌种子 `1921 + n − 1` |
+| `LOAD_AHEAD_SCREENS` / `LOAD_REARM_SCREENS` | `1` / `0.5` 屏 | 接缝距视角小于“剔除范围 + 1 屏”时请求下一页；每次并入后要再横向移动半屏才会发下一次请求 |
+| `MAX_LOADED_SONGS` / `MAX_EMPTY_PAGES` | `1200` / `3` | 客户端最多保留的歌数；连续 3 页去重后为空视为到底 |
+| `LOAD_TIMEOUT_MS` / `LOAD_RETRY_BASE_MS` / `LOAD_MAX_RETRIES` / `LOAD_COOLDOWN_MS` | `8000` / `2000` / `3` / `60000` | 分页请求超时，2 / 4 / 8 s 退避，再失败冷却 60 s |
+| `CULL_SEARCH_STEPS` | `24` | 二分求剔除范围（最宽列最远能画到多远）的步数 |
 | `MAX_PIXEL_RATIO` | `1.6` | renderer 像素比上限 |
 | `FOCUS_MARGIN_PX` / `RESULT_PANEL_GAP_PX` | `16` / `24` | 聚焦卡和点中卡可用区域的边距、与结果面板的间距 |
 | `RESULT_PANEL_WIDTH_PX` / `RESULT_PANEL_EDGE_PX` / `RESULT_PANEL_BESIDE_CENTER_PX` / `RESULT_PANEL_COMPACT_TOP_SHARE` | `390` / `21` / `205` / `0.5` | 面板挂载前预测它的位置（与 `.result-panel` 一致） |
@@ -334,7 +343,7 @@ getComputedStyle(document.documentElement).getPropertyValue("--font-ui")
 - 修复前，播放歌曲后 `refreshCards` 每次进度更新会重画所有卡片，实测一度约 5.94fps。
 - 已改为比较 `visualState`，只重画变化卡片；播放状态下复测约 120fps。
 - 该数字来自 Codex in-app Chromium、1440×900、高刷新率机器，不等于低端设备保证。
-- 每张纹理为 420×604 RGBA，数量为“歌曲数 + 1”，与墙上的实例数无关（54 首时 55 张）。390×844 下墙上约 250 个实例，都共用这些纹理。移动端 GPU 内存仍需 profile。
+- 每张纹理为 420×604 RGBA，按可见卡片按需创建，上限桌面 200 张、≤ 820 宽 110 张，外加 1 张白框卡专用纹理。1440×900 首屏约 85 张。加载到上千首后 mesh 仍按“每个实例一个”常驻（不可见的不渲染），移动端 GPU 内存和主线程仍需真机 profile（设计文档阶段 4）。
 - 页面隐藏时没有显式暂停 Three.js render loop。浏览器通常会节流，但代码没有 `visibilitychange` 控制。
 
 ### 4.4 尚未验证
@@ -599,10 +608,16 @@ npm run typecheck
 
 10. **纹理按歌共享，白框最多一张。**
     - 每首歌一张纹理，另加一张给唯一的选中/播放卡；白框只能画在这张上。
+    - 共享纹理按需创建：卡片进入可见范围时 `acquireFace`，每 120 帧 `sweepFaces` 按最久未用回收超出上限（桌面 200 / ≤ 820 宽 110）且 ≥ 60 帧没用过的；选中、播放、聚焦和当前白框卡的歌不回收。不要改回“建场景时为所有歌建纹理”，加载到上千首时显存会超过 1 GB。
     - `refreshCards` 的 `unchanged` 短路必须保留，删掉后播放时会严重掉帧。
 
+17. **动态加载不碰运动。**
+    - 新页只在墙右端追加列（`commitPage`），已有列的 x 和实例编号不变；并入只在接缝离视角超过剔除范围（`seamClearUnits`）时发生，所以画面不跳。
+    - 并入时把相机换算回墙的第一圈（`wallOrigin`，只改换算原点，不改 `pan`、不改速度），否则变宽后的墙会把已可见的列折返到别处。
+    - 请求触发放在同一个 rAF 里（`stepCatalog`），不另开循环或定时轮询；减少动态效果时第一页之后的请求也要等横向拖动。
+
 11. **调试挂钩只在开发模式、只读。**
-    - `window.__musicBoxDebug`（`memory()`、`activeLoops()`、`highlights()`、`cardPoints()`、`motion()`）只在 `process.env.NODE_ENV === "development"` 下挂载，生产构建里不能出现（在干净的 `.next` 上 build 后，`grep -R __musicBoxDebug .next` 应无结果）。
+    - `window.__musicBoxDebug`（`memory()`、`activeLoops()`、`highlights()`、`cardPoints()`、`catalog()`、`motion()`）只在 `process.env.NODE_ENV === "development"` 下挂载，生产构建里不能出现（在干净的 `.next` 上 build 后，`grep -R __musicBoxDebug .next` 应无结果）。
     - 全局名只写在 `src/components/jukebox/debug.ts` 里，组件在开发分支里用动态 `import()` 加载它。生产构建不会编译这个文件，webpack 缓存里也就没有这个名字。不要改成静态 import。
     - 不要加调速或任何写入型的调试开关。
 

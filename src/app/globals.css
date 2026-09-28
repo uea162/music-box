@@ -175,6 +175,18 @@ button {
   color: rgba(255, 255, 255, 0.3);
 }
 
+.weather-context {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.weather-icon {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
 .dock-actions {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 112px;
@@ -501,10 +513,6 @@ button {
   height: 100%;
   border-radius: inherit;
   background: rgba(255, 255, 255, 0.88);
-}
-
-.focus-card-preview-progress {
-  margin-top: 1.6cqw;
 }
 
 .focus-card-time {

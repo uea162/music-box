@@ -1,4 +1,4 @@
-import type { CoarseLocation, CurrentWeather } from "@/types/local-context";
+import type { CoarseLocation } from "@/types/local-context";
 
 export function parseCoarseLocation(value: unknown): CoarseLocation | null {
   if (!value || typeof value !== "object") return null;
@@ -23,12 +23,8 @@ export function weatherLabel(code: number): string {
   if (code <= 3) return "多云";
   if (code === 45 || code === 48) return "有雾";
   if (code >= 51 && code <= 67) return "有雨";
-  if (code >= 71 && code <= 86) return "有雪";
+  if ((code >= 71 && code <= 77) || code === 85 || code === 86) return "有雪";
   if (code >= 95) return "雷雨";
   if (code >= 80 && code <= 82) return "阵雨";
   return "天气未知";
-}
-
-export function formatWeather(weather: CurrentWeather | null): string {
-  return weather ? `${weatherLabel(weather.weatherCode)} ${Math.round(weather.temperatureC)}°C` : "天气暂不可用";
 }

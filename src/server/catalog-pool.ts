@@ -77,7 +77,6 @@ interface ITunesTrack {
   collectionName?: string;
   artworkUrl100?: string;
   previewUrl?: string;
-  trackTimeMillis?: number;
   trackViewUrl?: string;
   primaryGenreName?: string;
 }
@@ -122,7 +121,6 @@ function searchTrackToSong(track: ITunesTrack, index: number, storefront: string
     artworkUrl: base ? artworkAt(base, ARTWORK_SIZE) : undefined,
     artworkThumbUrl: base ? artworkAt(base, ARTWORK_THUMB_SIZE) : undefined,
     previewUrl: track.previewUrl,
-    durationMs: track.trackTimeMillis,
     externalUrl: track.trackViewUrl,
     genre: track.primaryGenreName,
     storefront,

@@ -67,21 +67,10 @@ export async function describeScene(image: string, signal: AbortSignal, onText: 
 
 async function askJev(scene: string, candidates: Song[], signal: AbortSignal): Promise<SongMatch> {
   if (!candidates.length) throw new Error("曲目尚未加载，请稍后重试");
-  const criteria = Object.fromEntries(candidates.map((song) => [
-    song.id, `${song.title} — ${song.artist}。${song.mood ?? "旋律感鲜明，适合日常场景"}`,
-  ]));
   const response = await fetch("/api/jev", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "jev-latest",
-      state: { scene },
-      questions: { song: {
-        type: "choice",
-        instructions: "哪一首歌的氛围最贴近 `scene`？按光线、天气、地点和情绪选，不要按歌名里的字面词硬套。",
-        criteria,
-      } },
-    }),
+    body: JSON.stringify({ scene, songIds: candidates.map((song) => song.id) }),
     signal,
   });
   if (!response.ok) throw new Error(`选歌服务暂时不可用 (${response.status})`);

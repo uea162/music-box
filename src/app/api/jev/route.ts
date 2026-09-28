@@ -1,23 +1,56 @@
+import { catalogSnapshot, getCatalogPool } from "@/server/catalog-pool";
+import { songWithMood } from "@/server/song-mood";
+
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const authorization = request.headers.get("Authorization") ??
-    (process.env.TYPESAFE_API_KEY ? `Bearer ${process.env.TYPESAFE_API_KEY}` : null);
-  if (!authorization) return Response.json({ error: "TYPESAFE_API_KEY 未配置" }, { status: 503 });
+  const key = process.env.TYPESAFE_API_KEY;
+  if (!key) return Response.json({ error: "TYPESAFE_API_KEY 未配置" }, { status: 503 });
 
-  let body: string;
+  let scene: string;
+  let songIds: string[];
   try {
-    body = await request.text();
-    JSON.parse(body);
+    const raw = await request.text();
+    if (raw.length > 8_000) throw new Error("Request too large");
+    const data: unknown = JSON.parse(raw);
+    if (!data || typeof data !== "object") throw new Error("Invalid request");
+    const value = data as Record<string, unknown>;
+    if (typeof value.scene !== "string" || !value.scene.trim() || value.scene.length > 500 ||
+      !Array.isArray(value.songIds) || value.songIds.length < 1 || value.songIds.length > 200 ||
+      value.songIds.some((id) => typeof id !== "string" || id.length > 100) ||
+      new Set(value.songIds).size !== value.songIds.length) throw new Error("Invalid request");
+    scene = value.scene.trim();
+    songIds = value.songIds as string[];
   } catch {
     return Response.json({ error: "选歌请求格式错误" }, { status: 400 });
   }
 
+  const pool = await getCatalogPool().catch(() => null);
+  const songs = pool?.songs.length ? pool.songs : catalogSnapshot()?.songs;
+  if (!songs?.length) return Response.json({ error: "曲库暂时不可用" }, { status: 503 });
+  const byId = new Map(songs.map((song) => [song.id, song]));
+  const candidates = songIds.map((id) => byId.get(id));
+  if (candidates.some((song) => !song)) {
+    return Response.json({ error: "选歌列表已过期，请重试" }, { status: 400 });
+  }
+  const criteria = Object.fromEntries(candidates.map((candidate) => {
+    const song = songWithMood(candidate!);
+    return [song.id, `${song.title} — ${song.artist}。${song.mood}`];
+  }));
+
   try {
     const upstream = await fetch("https://api.typesafe.ai/v1/systemone", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: authorization },
-      body,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model: "jev-latest",
+        state: { scene },
+        questions: { song: {
+          type: "choice",
+          instructions: "哪一首歌的氛围最贴近 `scene`？按光线、天气、地点和情绪选，不要按歌名里的字面词硬套。",
+          criteria,
+        } },
+      }),
       signal: request.signal,
       cache: "no-store",
     });

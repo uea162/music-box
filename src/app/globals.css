@@ -232,6 +232,7 @@ button {
   position: absolute;
   z-index: 11;
   inset: 0;
+  cursor: pointer;
   background: rgba(12, 9, 14, 0.55);
   backdrop-filter: blur(8px);
 }
@@ -245,6 +246,20 @@ button {
   left: min(calc(50% + 205px), calc(100% - min(390px, calc(100vw - 42px)) - 21px));
   width: min(390px, calc(100vw - 42px));
   translate: 0 -50%;
+  /* Empty space in the panel belongs to the scrim (click = back to the wall);
+     only the text and buttons themselves take clicks. */
+  pointer-events: none;
+}
+
+.result-panel > :not(.result-actions),
+.result-actions > * {
+  pointer-events: auto;
+}
+
+.result-panel > h2,
+.result-panel > p {
+  width: fit-content;
+  max-width: 100%;
 }
 
 .result-kicker {
@@ -284,6 +299,204 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  align-items: center;
+}
+
+.result-action {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  height: 38px;
+  padding: 0 18px;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: opacity 180ms ease, background-color 180ms ease;
+}
+
+.result-action-primary {
+  border-color: transparent;
+  background: #fff;
+  color: var(--ink-button);
+}
+
+.result-action-primary:hover {
+  opacity: 0.8;
+}
+
+.result-action-secondary {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.result-action-secondary:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.result-back {
+  display: block;
+  width: fit-content;
+  margin: 18px 0 0 10px;
+  padding: 4px 0;
+  cursor: pointer;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  transition: color 180ms ease;
+}
+
+.result-back:hover {
+  color: #fff;
+}
+
+/* Sizes are fractions of the card width (cqw), mirroring drawCard's CARD_*
+   constants, so the copy lines up with the 3D card at any focus zoom. */
+.focus-card-anchor {
+  position: absolute;
+  z-index: 13;
+  container-type: inline-size;
+}
+
+.focus-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  padding: 5cqw;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10.5cqw;
+  background: #1d1921;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+
+.focus-card-ambience {
+  position: absolute;
+  inset: -12%;
+  background-position: center;
+  background-size: cover;
+  filter: blur(18px) saturate(1.55) brightness(0.72);
+  opacity: 0.9;
+}
+
+.focus-card::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background:
+    linear-gradient(180deg, rgba(14, 10, 16, 0.08) 35%, rgba(14, 10, 16, 0.62) 100%),
+    rgba(14, 10, 16, 0.3);
+  pointer-events: none;
+}
+
+.focus-card > :not(.focus-card-ambience) {
+  position: relative;
+  z-index: 1;
+}
+
+.focus-card-art {
+  flex: none;
+  width: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 7.5cqw;
+  background: #2a2530;
+}
+
+.focus-card-art img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.focus-card-title,
+.focus-card-subtitle {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.focus-card-title {
+  margin-top: 5cqw;
+  color: #fff;
+  font-size: 6cqw;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.focus-card-subtitle {
+  color: rgba(255, 255, 255, 0.56);
+  font-size: 4.5cqw;
+  line-height: 1.35;
+}
+
+.focus-card-progress {
+  height: 1.5cqw;
+  margin-top: 5cqw;
+  overflow: hidden;
+  border-radius: 1cqw;
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.focus-card-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.focus-card-time {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 1.6cqw;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 3.7cqw;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.focus-card-controls {
+  display: flex;
+  gap: 10cqw;
+  align-items: center;
+  justify-content: center;
+  margin-top: auto;
+}
+
+.focus-card-controls button {
+  display: grid;
+  place-items: center;
+  width: 12cqw;
+  height: 12cqw;
+  padding: 0;
+  cursor: pointer;
+  background: none;
+  color: rgba(255, 255, 255, 0.92);
+  transition: opacity 180ms ease;
+}
+
+.focus-card-controls button:hover {
+  opacity: 0.7;
+}
+
+.focus-card-controls svg {
+  width: 8.5cqw;
+  height: 8.5cqw;
+  fill: currentColor;
+}
+
+.focus-card-controls .focus-card-play svg {
+  width: 10.5cqw;
+  height: 10.5cqw;
 }
 
 .source-note {
@@ -313,6 +526,15 @@ button {
 
   .result-panel h2 {
     font-size: 42px;
+  }
+
+  .focus-card {
+    padding: 4cqw;
+  }
+
+  .focus-card-subtitle,
+  .focus-card-time {
+    display: none;
   }
 
   .dock-copy span {

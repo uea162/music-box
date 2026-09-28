@@ -25,6 +25,21 @@ export interface JukeboxDebugApi {
     visible: boolean;
     rect: { left: number; top: number; right: number; bottom: number };
   }>;
+  catalog: () => {
+    loaded: number;
+    pages: number;
+    pending: boolean;
+    ready: number;
+    hasNext: boolean;
+    armed: boolean;
+    retryAt: number;
+    columns: number;
+    wallWidth: number;
+    seamDistance: number;
+    seamClear: number;
+    faces: number;
+    facesCap: number;
+  };
   motion: () => {
     targetSpeed: number;
     speed: number;

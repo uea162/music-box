@@ -4,8 +4,20 @@ export interface Song {
   artist: string;
   album?: string;
   artworkUrl?: string;
+  artworkThumbUrl?: string;
   previewUrl?: string;
   externalUrl?: string;
   genre?: string;
+  storefront?: string;
   accent: string;
+}
+
+export type CatalogSource = "itunes" | "snapshot" | "fallback";
+
+export interface CatalogPage {
+  songs: Song[];
+  nextCursor: string | null;
+  total: number;
+  poolVersion: string;
+  source: CatalogSource;
 }

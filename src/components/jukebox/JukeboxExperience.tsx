@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { fallbackSongs } from "@/data/fallback-songs";
 import { songKey } from "@/lib/song-key";
+import { chooseSong, describeScene, jpegForGemini, type SongMatch } from "@/lib/photo-recommendation";
 import type { CatalogPage, CatalogSource, Song } from "@/types/song";
 import type { JukeboxDebugApi } from "./debug";
 import { LocalContext } from "./LocalContext";
@@ -163,6 +164,7 @@ const SOURCE_LABELS: Record<CatalogSource, string> = {
   snapshot: "Saved catalog · 30 sec previews",
   fallback: "Offline study catalog",
 };
+const percent = (value: number) => `${Math.round(value * 100)}%`;
 
 const PALETTES = [
   ["#6f1d2b", "#140b10"],
@@ -713,6 +715,15 @@ export function JukeboxExperience() {
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedSong, setSelectedSong] = useState<Song | null>(null);
+  const [sceneText, setSceneText] = useState("");
+  const [photoStatus, setPhotoStatus] = useState<"idle" | "reading" | "choosing" | "done" | "image-error" | "song-error">("idle");
+  const [photoError, setPhotoError] = useState("");
+  const [match, setMatch] = useState<SongMatch | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const photoRequestRef = useRef<AbortController | null>(null);
+  const photoRunRef = useRef(0);
+  const photoStartedRef = useRef(0);
+  const photoInputRef = useRef<HTMLInputElement>(null);
   const [progress, setProgress] = useState(0);
   const playingIdRef = useRef(playingId);
   const selectedIdRef = useRef(selectedId);
@@ -750,6 +761,14 @@ export function JukeboxExperience() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (photoStatus !== "reading" && photoStatus !== "choosing") return;
+    const timer = window.setInterval(() => setElapsed(Math.floor((Date.now() - photoStartedRef.current) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [photoStatus]);
+
+  useEffect(() => () => photoRequestRef.current?.abort(), []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1901,6 +1920,9 @@ export function JukeboxExperience() {
     const pool = candidates.filter((candidate) => candidate.song.id !== selectedSong?.id);
     const pick = pool[Math.floor(Math.random() * pool.length)] ?? candidates[0];
     const song = pick.song;
+    setMatch(null);
+    setSceneText("");
+    setPhotoStatus("idle");
     // focus() glides to this copy of the song when it still exists.
     selectedInstanceRef.current = pick.instanceIndex;
     selectedIdRef.current = song.id;
@@ -1912,7 +1934,71 @@ export function JukeboxExperience() {
     window.setTimeout(() => setPhase("reveal"), 760);
   }, [phase, selectedSong?.id, songs, toggleSong]);
 
+  const handlePhoto = useCallback(async (file: File) => {
+    photoRequestRef.current?.abort();
+    const controller = new AbortController();
+    photoRequestRef.current = controller;
+    const run = ++photoRunRef.current;
+    photoStartedRef.current = Date.now();
+    setElapsed(0);
+    setSceneText("");
+    setPhotoError("");
+    setMatch(null);
+    setPhotoStatus("reading");
+    pausePlayback();
+    setPhase("idle");
+    setSelectedSong(null);
+    setSelectedId(null);
+    selectedInstanceRef.current = null;
+    sceneApiRef.current?.reset();
+
+    let scene: string;
+    try {
+      const image = await jpegForGemini(file);
+      if (controller.signal.aborted) return;
+      scene = await describeScene(image, controller.signal, (text) => {
+        if (run === photoRunRef.current) setSceneText(text);
+      });
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      setPhotoError(error instanceof Error ? error.message : "读图失败，请重试");
+      setPhotoStatus("image-error");
+      return;
+    }
+
+    if (controller.signal.aborted) return;
+    setSceneText(scene);
+    setPhotoStatus("choosing");
+    try {
+      const catalogResponse = await fetch("/api/recommendation-catalog", { signal: controller.signal });
+      if (!catalogResponse.ok) throw new Error("曲库暂时不可用，请重试");
+      const catalog = await catalogResponse.json() as { songs?: Song[] };
+      const result = await chooseSong(scene, catalog.songs ?? [], controller.signal);
+      if (controller.signal.aborted || run !== photoRunRef.current) return;
+      setMatch(result);
+      setPhotoStatus("done");
+      selectedInstanceRef.current = null;
+      selectedIdRef.current = result.song.id;
+      setSelectedId(result.song.id);
+      setSelectedSong(result.song);
+      setPhase("landing");
+      sceneApiRef.current?.focus(result.song.id);
+      window.setTimeout(() => {
+        if (run === photoRunRef.current) setPhase("reveal");
+      }, 760);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      setPhotoError(error instanceof Error ? error.message : "选歌失败，请重试");
+      setPhotoStatus("song-error");
+    }
+  }, [pausePlayback]);
+
   const reset = useCallback(() => {
+    photoRequestRef.current?.abort();
+    photoRunRef.current += 1;
+    setPhotoStatus("idle");
+    setMatch(null);
+    setSceneText("");
     pausePlayback();
     setPhase("idle");
     setSelectedId(null);
@@ -1959,6 +2045,34 @@ export function JukeboxExperience() {
       </div>
 
       {phase === "loading" ? <p className="loading-copy">Cataloguing the room</p> : null}
+
+      <input
+        ref={photoInputRef}
+        className="visually-hidden"
+        type="file"
+        accept="image/*"
+        aria-label="上传照片"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (file) void handlePhoto(file);
+        }}
+      />
+
+      {(photoStatus === "reading" || photoStatus === "choosing" || photoStatus === "image-error" || photoStatus === "song-error") && (
+        <section className="analysis-panel" aria-live="polite">
+          <p className="result-kicker">Photo to music</p>
+          {sceneText ? <p className="analysis-scene">{sceneText}</p> : null}
+          {photoStatus === "reading" || photoStatus === "choosing" ? (
+            <p className="analysis-status">{photoStatus === "reading" ? "正在读图" : "正在选歌"} · 已过 {elapsed} 秒</p>
+          ) : (
+            <>
+              <p className="analysis-error">{photoStatus === "image-error" ? "读图失败" : "选歌失败"}：{photoError}</p>
+              <button type="button" className="result-action" onClick={() => photoInputRef.current?.click()}>换张照片</button>
+            </>
+          )}
+        </section>
+      )}
 
       <AnimatePresence>
         {phase === "reveal" && selectedSong ? (
@@ -2052,14 +2166,27 @@ export function JukeboxExperience() {
               exit={{ opacity: 0, x: 24 }}
               transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
             >
+              {match && sceneText ? <p className="result-scene">{sceneText}</p> : null}
+              {match && selectedSong.artworkUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element -- catalog artwork is already CDN sized
+                <img className="result-artwork" src={selectedSong.artworkUrl} alt="" />
+              ) : null}
               <p className="result-kicker">Selected for right now</p>
               <h2 lang={selectedLang}>{selectedSong.title}</h2>
               <p className="result-artist" lang={selectedLang}>{selectedSong.artist}</p>
-              <p className="result-note">
-                A warm, unhurried pick for the room you are in. The recommendation engine comes next;
-                this prototype is proving the wall, the motion and the listening loop.
-              </p>
+              {match ? (
+                <div className="match-details">
+                  <p>匹配概率（决选） <strong>{percent(match.probability)}</strong> · 把握 <strong>{typeof match.confidence === "number" ? percent(match.confidence) : match.confidence}</strong></p>
+                  <p className="match-alternatives-label">决选概率次高的 3 首</p>
+                  <ol>
+                    {match.alternatives.map(({ song, probability }) => (
+                      <li key={song.id}><span>{song.title} · {song.artist}</span><span>{percent(probability)}</span></li>
+                    ))}
+                  </ol>
+                </div>
+              ) : null}
               <div className="result-actions">
+                {match ? <button type="button" className="result-action result-action-primary" onClick={() => photoInputRef.current?.click()}>换张照片</button> : null}
                 <button type="button" className="result-action result-action-primary" onClick={chooseRandom}>
                   <span aria-hidden="true">↻</span> Another record
                 </button>
@@ -2099,8 +2226,8 @@ export function JukeboxExperience() {
               <button className="primary-action" onClick={chooseRandom} disabled={phase !== "idle" || !songs.length}>
                 {phase === "landing" ? "Bringing one forward…" : "Pick one record"}
               </button>
-              <button className="ghost-action" onClick={() => canvasRef.current?.focus()}>
-                Drag the wall to explore
+              <button className="ghost-action" onClick={() => photoInputRef.current?.click()} disabled={!songs.length}>
+                上传照片
               </button>
             </div>
           </motion.section>

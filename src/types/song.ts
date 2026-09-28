@@ -12,6 +12,7 @@ export interface Song {
   previewStartMs?: number;
   externalUrl?: string;
   genre?: string;
+  mood?: string;
   storefront?: string;
   accent: string;
 }

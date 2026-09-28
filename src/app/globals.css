@@ -526,10 +526,6 @@ button {
   background: rgba(255, 255, 255, 0.88);
 }
 
-.focus-card-preview-progress {
-  margin-top: 1.6cqw;
-}
-
 .focus-card-time {
   display: flex;
   justify-content: space-between;

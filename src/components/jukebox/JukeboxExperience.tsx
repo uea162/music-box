@@ -1443,6 +1443,17 @@ export function JukeboxExperience() {
       return frame;
     };
 
+    const fallbackFocusBounds = () => {
+      const frame = focusFrame();
+      const frameWidth = Math.max(1, frame.right - frame.left);
+      const frameHeight = Math.max(1, frame.bottom - frame.top);
+      const width = Math.max(1, Math.min(360, frameWidth * 0.8, frameHeight * 0.82 / CARD_ASPECT));
+      const height = width * CARD_ASPECT;
+      const left = frame.left + (frameWidth - width) / 2;
+      const top = frame.top + (frameHeight - height) / 2;
+      return { left, top, right: left + width, bottom: top + height };
+    };
+
     // Zoom stays at the preferred value unless the centred card would not fit
     // the frame; the whole wall then shifts on screen (never the wall offsets)
     // so the card sits inside the frame, nearest to the screen centre.
@@ -1469,9 +1480,19 @@ export function JukeboxExperience() {
 
     const focusSong = (songId: string) => {
       const card = nearestCopy(songId, selectedInstanceRef.current);
-      if (!card) return;
-      selectedInstanceRef.current = card.instanceIndex;
       focus.songId = songId;
+      if (!card) {
+        // Photo matching can pick a song beyond the pages currently on the wall.
+        // Keep the result active so its HTML card can be shown independently.
+        selectedInstanceRef.current = null;
+        focus.card = null;
+        focus.gliding = false;
+        targetScale = 1;
+        focusShiftTarget.set(0, 0);
+        stopInertia();
+        return;
+      }
+      selectedInstanceRef.current = card.instanceIndex;
       focus.card = card;
       focus.gliding = true;
       focus.holdX = 0;
@@ -1665,11 +1686,13 @@ export function JukeboxExperience() {
       const overlay = focusCardRef.current;
       if (!overlay) return;
       const card = focus.songId ? focus.card : null;
-      if (!card || !card.visible) {
+      if (!focus.songId || (card && !card.visible)) {
         overlay.style.visibility = "hidden";
         return;
       }
-      const bounds = cardBounds(card);
+      // A recommendation can come from the full catalog before its page has
+      // been loaded into the 3D wall. Give that song the same sharp result card.
+      const bounds = card ? cardBounds(card) : fallbackFocusBounds();
       const box = [bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top].map((value) =>
         value.toFixed(1),
       );
@@ -2130,7 +2153,7 @@ export function JukeboxExperience() {
                 <img className="result-artwork" src={selectedSong.artworkUrl} alt="" />
               ) : null}
               <p className="result-kicker">Selected for right now</p>
-              <h2 lang={selectedLang}>{selectedSong.title}</h2>
+              <h2 className={selectedSong.title.length > 48 ? "result-title-long" : undefined} lang={selectedLang}>{selectedSong.title}</h2>
               <p className="result-artist" lang={selectedLang}>{selectedSong.artist}</p>
               {match ? (
                 <div className="match-details">

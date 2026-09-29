@@ -342,6 +342,12 @@ button {
   letter-spacing: -0.045em;
 }
 
+.result-panel h2.result-title-long {
+  font-size: clamp(30px, 2.5vw, 38px);
+  line-height: 1.08;
+  letter-spacing: -0.025em;
+}
+
 .result-artist {
   margin: 11px 0 22px;
   color: rgba(255, 255, 255, 0.74);

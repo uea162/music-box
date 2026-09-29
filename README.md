@@ -13,6 +13,8 @@ npm run dev
 
 上传照片功能需要在项目根目录创建 `.env.local`，填入 `GEMINI_API_KEY` 和 `TYPESAFE_API_KEY`（变量名见 `.env.example`）。密钥只在服务端使用。上传后浏览器会先将图片缩到最长边 512 像素并转为 JPEG，同时加载曲库；Gemini 流式返回一句画面描述给 Jev。Jev 从当前曲库中选歌；曲库超过 255 首时，各组并行初选，再对每组优胜曲目做最终选择。
 
+读图默认使用 `gemini-3.6-flash`。遇到额度限制、模型不可用或超时，会依次尝试 `gemini-3.1-flash-lite`、`gemini-3.5-flash` 和 `gemini-3.8-flash`；已遇到额度限制的模型会短暂跳过，减少重复等待。实际可用额度以 Google AI Studio 中当前项目的配额为准。
+
 ## 验证
 
 ```bash

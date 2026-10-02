@@ -92,6 +92,8 @@ const PARALLAX_RATE = 2.8;
 const RESIZE_SETTLE_MS = 150;
 const MAX_PIXEL_RATIO = 1.6;
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+const RECENT_SONGS_STORAGE_KEY = "music-box-recent-songs";
+const RECENT_SONGS_LIMIT = 40;
 
 // Catalog paging (docs/DYNAMIC-SONG-LOADING.md §4). New pages become extra
 // columns appended at the right end of the wall, the way [§1] describes.
@@ -707,6 +709,8 @@ export function JukeboxExperience() {
   const photoRequestRef = useRef<AbortController | null>(null);
   const photoRunRef = useRef(0);
   const photoStartedRef = useRef(0);
+  const recommendationSongsRef = useRef<Song[]>([]);
+  const recentSongKeysRef = useRef<string[]>([]);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const [progress, setProgress] = useState(0);
@@ -724,6 +728,27 @@ export function JukeboxExperience() {
     audioRef.current?.pause();
     playingIdRef.current = null;
     setPlayingId(null);
+  }, []);
+
+  const rememberSong = useCallback((song: Song) => {
+    const key = songKey(song);
+    recentSongKeysRef.current = [key, ...recentSongKeysRef.current.filter((recent) => recent !== key)].slice(0, RECENT_SONGS_LIMIT);
+    try { window.localStorage.setItem(RECENT_SONGS_STORAGE_KEY, JSON.stringify(recentSongKeysRef.current)); } catch { /* Storage can be unavailable. */ }
+  }, []);
+
+  const freshRecommendations = useCallback((catalog: Song[]) => {
+    const recent = new Set(recentSongKeysRef.current);
+    const fresh = catalog.filter((song) => !recent.has(songKey(song)));
+    return fresh.length >= 4 ? fresh : catalog;
+  }, []);
+
+  useEffect(() => {
+    try {
+      const saved: unknown = JSON.parse(window.localStorage.getItem(RECENT_SONGS_STORAGE_KEY) ?? "[]");
+      if (Array.isArray(saved)) {
+        recentSongKeysRef.current = saved.filter((key): key is string => typeof key === "string" && key.length < 300).slice(0, RECENT_SONGS_LIMIT);
+      }
+    } catch { /* Storage can be unavailable or contain old data. */ }
   }, []);
 
   useEffect(() => {
@@ -1932,7 +1957,9 @@ export function JukeboxExperience() {
     if (!songs.length || phase === "landing") return;
     const nearby = sceneApiRef.current?.visibleCards() ?? [];
     const candidates = nearby.length ? nearby : songs.map((song) => ({ song, instanceIndex: null }));
-    const pool = candidates.filter((candidate) => candidate.song.id !== selectedSong?.id);
+    const recent = new Set(recentSongKeysRef.current);
+    const fresh = candidates.filter((candidate) => !recent.has(songKey(candidate.song)));
+    const pool = fresh.length ? fresh : candidates.filter((candidate) => candidate.song.id !== selectedSong?.id);
     const pick = pool[Math.floor(Math.random() * pool.length)] ?? candidates[0];
     const song = pick.song;
     setMatch(null);
@@ -1943,10 +1970,11 @@ export function JukeboxExperience() {
     setPhase("landing");
     setSelectedId(song.id);
     setSelectedSong(song);
+    rememberSong(song);
     sceneApiRef.current?.focus(song.id);
     void toggleSong(song);
     window.setTimeout(() => setPhase("reveal"), 760);
-  }, [phase, selectedSong?.id, songs, toggleSong]);
+  }, [phase, rememberSong, selectedSong?.id, songs, toggleSong]);
 
   const selectMatchSong = useCallback((song: Song) => {
     if (song.id === selectedSong?.id) return;
@@ -1954,9 +1982,48 @@ export function JukeboxExperience() {
     selectedIdRef.current = song.id;
     setSelectedId(song.id);
     setSelectedSong(song);
+    rememberSong(song);
     sceneApiRef.current?.focus(song.id);
     void toggleSong(song);
-  }, [selectedSong?.id, toggleSong]);
+  }, [rememberSong, selectedSong?.id, toggleSong]);
+
+  const chooseAnotherMatch = useCallback(async () => {
+    if (!sceneDescription || !recommendationSongsRef.current.length || photoStatus === "choosing") return;
+    const recent = new Set(recentSongKeysRef.current);
+    const nextAlternative = match?.alternatives.find(({ song }) => !recent.has(songKey(song)));
+    if (nextAlternative) {
+      selectMatchSong(nextAlternative.song);
+      return;
+    }
+    photoRequestRef.current?.abort();
+    const controller = new AbortController();
+    photoRequestRef.current = controller;
+    const run = ++photoRunRef.current;
+    const candidates = freshRecommendations(recommendationSongsRef.current);
+    photoStartedRef.current = Date.now();
+    setElapsed(0);
+    setPhotoError("");
+    setPhotoStatus("choosing");
+    try {
+      const result = await chooseSong(sceneDescription, candidates, controller.signal);
+      if (controller.signal.aborted || run !== photoRunRef.current) return;
+      setElapsed(Math.floor((Date.now() - photoStartedRef.current) / 1000));
+      setMatchedSongCount(candidates.length);
+      setMatch(result);
+      setPhotoStatus("done");
+      selectedInstanceRef.current = null;
+      selectedIdRef.current = result.song.id;
+      setSelectedId(result.song.id);
+      setSelectedSong(result.song);
+      rememberSong(result.song);
+      sceneApiRef.current?.focus(result.song.id);
+      void toggleSong(result.song);
+    } catch (error) {
+      if (controller.signal.aborted || run !== photoRunRef.current) return;
+      setPhotoError(error instanceof Error ? error.message : "选歌失败，请重试");
+      setPhotoStatus("song-error");
+    }
+  }, [freshRecommendations, match, photoStatus, rememberSong, sceneDescription, selectMatchSong, toggleSong]);
 
   const handlePhoto = useCallback(async (file: File) => {
     photoRequestRef.current?.abort();
@@ -1970,6 +2037,7 @@ export function JukeboxExperience() {
     setPhotoPreview(null);
     setSceneDescription("");
     setMatchedSongCount(0);
+    recommendationSongsRef.current = [];
     setPhotoStatus("reading");
     pausePlayback();
     setPhase("idle");
@@ -2006,8 +2074,10 @@ export function JukeboxExperience() {
     try {
       const catalog = await catalogPromise;
       if (!catalog) throw new Error("曲库暂时不可用，请重试");
-      setMatchedSongCount(catalog.songs?.length ?? 0);
-      const result = await chooseSong(scene, catalog.songs ?? [], controller.signal);
+      recommendationSongsRef.current = catalog.songs ?? [];
+      const candidates = freshRecommendations(recommendationSongsRef.current);
+      setMatchedSongCount(candidates.length);
+      const result = await chooseSong(scene, candidates, controller.signal);
       if (controller.signal.aborted || run !== photoRunRef.current) return;
       const spinRemaining = PHOTO_MIN_SPIN_MS - (Date.now() - photoStartedRef.current);
       if (spinRemaining > 0) await new Promise<void>((resolve) => window.setTimeout(resolve, spinRemaining));
@@ -2023,6 +2093,7 @@ export function JukeboxExperience() {
       selectedIdRef.current = result.song.id;
       setSelectedId(result.song.id);
       setSelectedSong(result.song);
+      rememberSong(result.song);
       sceneApiRef.current?.focus(result.song.id);
       sceneApiRef.current?.spin("stop");
       void toggleSong(result.song);
@@ -2035,7 +2106,7 @@ export function JukeboxExperience() {
       setPhotoError(error instanceof Error ? error.message : "选歌失败，请重试");
       setPhotoStatus("song-error");
     }
-  }, [pausePlayback, toggleSong]);
+  }, [freshRecommendations, pausePlayback, rememberSong, toggleSong]);
 
   const reset = useCallback(() => {
     photoRequestRef.current?.abort();
@@ -2046,6 +2117,7 @@ export function JukeboxExperience() {
     setPhotoPreview(null);
     setSceneDescription("");
     setMatchedSongCount(0);
+    recommendationSongsRef.current = [];
     pausePlayback();
     setPhase("idle");
     setSelectedId(null);
@@ -2203,7 +2275,7 @@ export function JukeboxExperience() {
                       )}
                     </svg>
                   </button>
-                  <button type="button" aria-label="换一首" onClick={chooseRandom}>
+                  <button type="button" aria-label="换一首" onClick={match ? () => void chooseAnotherMatch() : chooseRandom} disabled={photoStatus === "choosing"}>
                     <svg viewBox="0 0 24 24" aria-hidden="true">
                       <path d="m3 6 8 6-8 6zM13 6l8 6-8 6z" />
                     </svg>
@@ -2243,7 +2315,7 @@ export function JukeboxExperience() {
                       <ol>
                         {alsoClose.map(({ song, probability }) => (
                           <li key={song.id}>
-                            <button type="button" className="match-alternative" onClick={() => selectMatchSong(song)} aria-label={`播放 ${song.title}，${song.artist}`}>
+                            <button type="button" className="match-alternative" onClick={() => selectMatchSong(song)} disabled={photoStatus === "choosing"} aria-label={`播放 ${song.title}，${song.artist}`}>
                               {song.artworkThumbUrl || song.artworkUrl ? (
                                 // eslint-disable-next-line @next/next/no-img-element -- catalog artwork is already CDN sized
                                 <img src={song.artworkThumbUrl || song.artworkUrl} alt="" />
@@ -2256,6 +2328,7 @@ export function JukeboxExperience() {
                       </ol>
                     </div>
                   ) : null}
+                  {photoStatus === "song-error" ? <p className="match-error" role="status">{photoError}</p> : null}
                 </>
               ) : (
                 <>
@@ -2265,8 +2338,8 @@ export function JukeboxExperience() {
                 </>
               )}
               <div className="result-actions">
-                <button type="button" className="result-action result-action-primary" onClick={chooseRandom}>
-                  <span aria-hidden="true">↻</span> Another one
+                <button type="button" className="result-action result-action-primary" onClick={match ? () => void chooseAnotherMatch() : chooseRandom} disabled={photoStatus === "choosing"}>
+                  <span aria-hidden="true">↻</span> {photoStatus === "choosing" ? "Choosing..." : "Another one"}
                 </button>
                 {selectedSong.externalUrl ? (
                   <a

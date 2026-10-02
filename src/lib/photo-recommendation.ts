@@ -30,7 +30,16 @@ export async function describeScene(image: string, signal: AbortSignal, onText: 
     body: JSON.stringify({ image }),
     signal,
   });
-  if (!response.ok || !response.body) throw new Error("读图服务暂时不可用，请重试");
+  if (!response.ok) throw new Error("读图服务暂时不可用，请重试");
+  if (response.headers.get("Content-Type")?.includes("application/json")) {
+    const data: unknown = await response.json();
+    const scene = data && typeof data === "object" && "scene" in data && typeof data.scene === "string"
+      ? data.scene.trim().replace(/\s+/g, " ") : "";
+    if (!scene) throw new Error("读图没有返回画面描述，请重试");
+    onText(scene);
+    return scene;
+  }
+  if (!response.body) throw new Error("读图服务暂时不可用，请重试");
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();

@@ -12,7 +12,9 @@ const visible = `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ te
 const thoughtOnly = `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: "internal", thought: true }] } }] })}\n\n`;
 const originalFetch = globalThis.fetch;
 const originalKey = process.env.GEMINI_API_KEY;
+const originalMoondreamKey = process.env.MOONDREAM_API_KEY;
 process.env.GEMINI_API_KEY = "test-key";
+delete process.env.MOONDREAM_API_KEY;
 
 function request() {
   return new Request("http://localhost/api/scene", {
@@ -22,6 +24,33 @@ function request() {
 }
 
 try {
+  process.env.MOONDREAM_API_KEY = "moon-test-key";
+  const moonCalls = [];
+  globalThis.fetch = async (url, options) => {
+    moonCalls.push({ url: String(url), headers: options.headers, body: JSON.parse(options.body) });
+    return Response.json({ answer: "雨夜街道" });
+  };
+  const moonResponse = await route.POST(request());
+  assert.deepEqual(await moonResponse.json(), { scene: "雨夜街道" });
+  assert.equal(moonCalls.length, 1);
+  assert.equal(moonCalls[0].url, "https://api.moondream.ai/v1/query");
+  assert.equal(moonCalls[0].headers["X-Moondream-Auth"], "moon-test-key");
+  assert.equal(moonCalls[0].body.model, "moondream3.1-9B-A2B");
+  assert.equal(moonCalls[0].body.image_url, "data:image/jpeg;base64,AA==");
+
+  globalThis.fetch = async (url) => String(url).includes("moondream.ai")
+    ? Response.json({ error: "temporary" }, { status: 503 })
+    : new Response(visible);
+  const moonFallback = await route.POST(request());
+  assert.equal(moonFallback.status, 200);
+  assert.match(await moonFallback.text(), /雨夜街道/);
+
+  delete process.env.GEMINI_API_KEY;
+  globalThis.fetch = async () => Response.json({ answer: "" });
+  assert.equal((await route.POST(request())).status, 502);
+
+  process.env.GEMINI_API_KEY = "test-key";
+  delete process.env.MOONDREAM_API_KEY;
   const calls = [];
   globalThis.fetch = async (url, options) => {
     const model = String(url).match(/models\/([^:]+)/)?.[1];
@@ -67,9 +96,11 @@ try {
   ]);
   assert.equal(calls[3].body.generationConfig.thinkingConfig.thinkingLevel, "low");
 
-  console.log("Gemini fallback checks passed");
+  console.log("Moondream and Gemini fallback checks passed");
 } finally {
   globalThis.fetch = originalFetch;
   if (originalKey === undefined) delete process.env.GEMINI_API_KEY;
   else process.env.GEMINI_API_KEY = originalKey;
+  if (originalMoondreamKey === undefined) delete process.env.MOONDREAM_API_KEY;
+  else process.env.MOONDREAM_API_KEY = originalMoondreamKey;
 }

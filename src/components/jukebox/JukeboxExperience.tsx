@@ -695,6 +695,9 @@ export function JukeboxExperience() {
   const [photoStatus, setPhotoStatus] = useState<"idle" | "reading" | "choosing" | "done" | "image-error" | "song-error">("idle");
   const [photoError, setPhotoError] = useState("");
   const [match, setMatch] = useState<SongMatch | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [sceneDescription, setSceneDescription] = useState("");
+  const [matchedSongCount, setMatchedSongCount] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const photoRequestRef = useRef<AbortController | null>(null);
   const photoRunRef = useRef(0);
@@ -1932,6 +1935,16 @@ export function JukeboxExperience() {
     window.setTimeout(() => setPhase("reveal"), 760);
   }, [phase, selectedSong?.id, songs, toggleSong]);
 
+  const selectMatchSong = useCallback((song: Song) => {
+    if (song.id === selectedSong?.id) return;
+    selectedInstanceRef.current = null;
+    selectedIdRef.current = song.id;
+    setSelectedId(song.id);
+    setSelectedSong(song);
+    sceneApiRef.current?.focus(song.id);
+    void toggleSong(song);
+  }, [selectedSong?.id, toggleSong]);
+
   const handlePhoto = useCallback(async (file: File) => {
     photoRequestRef.current?.abort();
     const controller = new AbortController();
@@ -1941,6 +1954,9 @@ export function JukeboxExperience() {
     setElapsed(0);
     setPhotoError("");
     setMatch(null);
+    setPhotoPreview(null);
+    setSceneDescription("");
+    setMatchedSongCount(0);
     setPhotoStatus("reading");
     pausePlayback();
     setPhase("idle");
@@ -1949,7 +1965,7 @@ export function JukeboxExperience() {
     selectedInstanceRef.current = null;
     sceneApiRef.current?.reset();
 
-    // Catalog loading runs beside image resizing and Gemini instead of after them.
+    // Catalog loading runs beside image resizing and scene description instead of after them.
     const catalogPromise = fetch("/api/recommendation-catalog", { signal: controller.signal })
       .then(async (response) => response.ok ? await response.json() as { songs?: Song[] } : null)
       .catch(() => null);
@@ -1958,7 +1974,10 @@ export function JukeboxExperience() {
     try {
       const image = await jpegForGemini(file);
       if (controller.signal.aborted) return;
+      setPhotoPreview(`data:image/jpeg;base64,${image}`);
       scene = await describeScene(image, controller.signal, () => {});
+      if (controller.signal.aborted || run !== photoRunRef.current) return;
+      setSceneDescription(scene);
     } catch (error) {
       if (controller.signal.aborted) return;
       controller.abort();
@@ -1972,8 +1991,10 @@ export function JukeboxExperience() {
     try {
       const catalog = await catalogPromise;
       if (!catalog) throw new Error("曲库暂时不可用，请重试");
+      setMatchedSongCount(catalog.songs?.length ?? 0);
       const result = await chooseSong(scene, catalog.songs ?? [], controller.signal);
       if (controller.signal.aborted || run !== photoRunRef.current) return;
+      setElapsed(Math.floor((Date.now() - photoStartedRef.current) / 1000));
       setMatch(result);
       setPhotoStatus("done");
       selectedInstanceRef.current = null;
@@ -1998,6 +2019,9 @@ export function JukeboxExperience() {
     photoRunRef.current += 1;
     setPhotoStatus("idle");
     setMatch(null);
+    setPhotoPreview(null);
+    setSceneDescription("");
+    setMatchedSongCount(0);
     pausePlayback();
     setPhase("idle");
     setSelectedId(null);
@@ -2024,6 +2048,12 @@ export function JukeboxExperience() {
     selectedSong && (HAN_PATTERN.test(selectedSong.title) || HAN_PATTERN.test(selectedSong.artist))
       ? "zh-HK"
       : undefined;
+  const matchChoices = match ? [
+    { song: match.song, probability: match.probability },
+    ...match.alternatives,
+  ] : [];
+  const selectedProbability = matchChoices.find(({ song }) => song.id === selectedSong?.id)?.probability ?? match?.probability ?? 0;
+  const alsoClose = matchChoices.filter(({ song }) => song.id !== selectedSong?.id).slice(0, 3);
 
   return (
     <main className="jukebox-shell">
@@ -2155,28 +2185,54 @@ export function JukeboxExperience() {
               exit={{ opacity: 0, x: 24 }}
               transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
             >
-              {match && selectedSong.artworkUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element -- catalog artwork is already CDN sized
-                <img className="result-artwork" src={selectedSong.artworkUrl} alt="" />
-              ) : null}
-              <p className="result-kicker">Selected for right now</p>
-              <h2 className={selectedSong.title.length > 48 ? "result-title-long" : undefined} lang={selectedLang}>{selectedSong.title}</h2>
-              <p className="result-artist" lang={selectedLang}>{selectedSong.artist}</p>
               {match ? (
-                <div className="match-details">
-                  <p>匹配概率（决选） <strong>{percent(match.probability)}</strong> · 把握 <strong>{typeof match.confidence === "number" ? percent(match.confidence) : match.confidence}</strong></p>
-                  <p className="match-alternatives-label">决选概率次高的 3 首</p>
-                  <ol>
-                    {match.alternatives.map(({ song, probability }) => (
-                      <li key={song.id}><span>{song.title} · {song.artist}</span><span>{percent(probability)}</span></li>
-                    ))}
-                  </ol>
-                </div>
-              ) : null}
+                <>
+                  <div className="match-headline">
+                    <div className="match-ring" style={{ background: `conic-gradient(#efadd1 ${Math.max(0, Math.min(100, selectedProbability * 100))}%, rgba(255,255,255,.16) 0)` }}>
+                      <span>{percent(selectedProbability)}</span>
+                    </div>
+                    <div>
+                      <h2>sure you&apos;ll<br />like this</h2>
+                      <p>Jev took {elapsed} seconds to pick it</p>
+                    </div>
+                  </div>
+                  <div className="match-story">
+                    {photoPreview ? (
+                      // eslint-disable-next-line @next/next/no-img-element -- local resized upload preview
+                      <img src={photoPreview} alt="你上传的照片" />
+                    ) : null}
+                    <p>Jev saw your photo as “{sceneDescription}”<br />Jev weighed {matchedSongCount.toLocaleString()} songs for this moment.</p>
+                  </div>
+                  {alsoClose.length ? (
+                    <div className="match-details">
+                      <p className="match-alternatives-label">ALSO CLOSE</p>
+                      <ol>
+                        {alsoClose.map(({ song, probability }) => (
+                          <li key={song.id}>
+                            <button type="button" className="match-alternative" onClick={() => selectMatchSong(song)} aria-label={`播放 ${song.title}，${song.artist}`}>
+                              {song.artworkThumbUrl || song.artworkUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element -- catalog artwork is already CDN sized
+                                <img src={song.artworkThumbUrl || song.artworkUrl} alt="" />
+                              ) : <span className="match-alternative-placeholder" aria-hidden="true">♪</span>}
+                              <span className="match-alternative-copy"><strong>{song.title}</strong><small>{song.artist}</small></span>
+                              <span className="match-alternative-score">{percent(probability)}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <p className="result-kicker">Selected for right now</p>
+                  <h2 className={selectedSong.title.length > 48 ? "result-title-long" : undefined} lang={selectedLang}>{selectedSong.title}</h2>
+                  <p className="result-artist" lang={selectedLang}>{selectedSong.artist}</p>
+                </>
+              )}
               <div className="result-actions">
-                {match ? <button type="button" className="result-action result-action-primary" onClick={() => photoInputRef.current?.click()}>换张照片</button> : null}
                 <button type="button" className="result-action result-action-primary" onClick={chooseRandom}>
-                  <span aria-hidden="true">↻</span> Another record
+                  <span aria-hidden="true">↻</span> Another one
                 </button>
                 {selectedSong.externalUrl ? (
                   <a

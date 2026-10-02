@@ -1,6 +1,7 @@
 export const runtime = "nodejs";
 
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+const MOONDREAM_API = "https://api.moondream.ai/v1/query";
 const MODELS = [
   { id: "gemini-3.6-flash", thinkingLevel: "minimal", timeoutMs: 7_000 },
   { id: "gemini-3.1-flash-lite", thinkingLevel: "minimal", timeoutMs: 7_000 },
@@ -39,8 +40,11 @@ function recordCooldown(model: string, status: number, errorBody: string) {
 }
 
 export async function POST(request: Request) {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) return Response.json({ error: "GEMINI_API_KEY 未配置" }, { status: 503 });
+  const moondreamKey = process.env.MOONDREAM_API_KEY;
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (!moondreamKey && !geminiKey) {
+    return Response.json({ error: "读图服务密钥未配置" }, { status: 503 });
+  }
 
   let image: unknown;
   try {
@@ -51,6 +55,33 @@ export async function POST(request: Request) {
   if (typeof image !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(image) || image.length > 3_000_000) {
     return Response.json({ error: "图片格式或大小无效" }, { status: 400 });
   }
+
+  if (moondreamKey && !request.signal.aborted) {
+    try {
+      const upstream = await fetch(MOONDREAM_API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Moondream-Auth": moondreamKey },
+        body: JSON.stringify({
+          model: "moondream3.1-9B-A2B",
+          image_url: `data:image/jpeg;base64,${image}`,
+          question: "请用一句中文描述这张图片的画面，涵盖地点、光线、天气或室内外、氛围和主要物体。只输出这一句，不要推荐歌曲，不要分点。",
+        }),
+        signal: AbortSignal.any([request.signal, AbortSignal.timeout(7_000)]),
+        cache: "no-store",
+      });
+      if (upstream.ok) {
+        const result: unknown = await upstream.json();
+        const answer = result && typeof result === "object" && "answer" in result ? result.answer : null;
+        if (typeof answer === "string" && answer.trim()) {
+          return Response.json({ scene: answer.trim() }, { headers: { "Cache-Control": "no-store" } });
+        }
+      }
+    } catch {
+      if (request.signal.aborted) return Response.json({ error: "读图请求已取消" }, { status: 499 });
+    }
+  }
+
+  if (!geminiKey) return Response.json({ error: "Moondream 读图暂时不可用" }, { status: 502 });
 
   const contents = [{ role: "user", parts: [
     { text: "请用一句中文描述这张图片的画面，涵盖地点、光线、天气或室内外、氛围和主要物体。只输出这一句，不要推荐歌曲，不要分点。" },
@@ -64,7 +95,7 @@ export async function POST(request: Request) {
     try {
       const upstream = await fetch(`${API_BASE}/${model.id}:streamGenerateContent?alt=sse`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+        headers: { "Content-Type": "application/json", "x-goog-api-key": geminiKey },
         body: JSON.stringify({
           contents,
           generationConfig: {

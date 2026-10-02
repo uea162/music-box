@@ -8,7 +8,8 @@ const compiled = ts.transpileModule(source, {
 }).outputText;
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
 const route = await import(moduleUrl);
-const visible = `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: "雨夜街道" }] } }] })}\n\n`;
+const sceneText = "雨后的城市街道灯光柔和";
+const visible = `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: sceneText }] } }] })}\n\n`;
 const thoughtOnly = `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: "internal", thought: true }] } }] })}\n\n`;
 const originalFetch = globalThis.fetch;
 const originalKey = process.env.GEMINI_API_KEY;
@@ -28,25 +29,32 @@ try {
   const moonCalls = [];
   globalThis.fetch = async (url, options) => {
     moonCalls.push({ url: String(url), headers: options.headers, body: JSON.parse(options.body) });
-    return Response.json({ answer: "雨夜街道" });
+    return Response.json({ answer: "A quiet city street glows after the rain." });
   };
   const moonResponse = await route.POST(request());
-  assert.deepEqual(await moonResponse.json(), { scene: "雨夜街道" });
+  assert.deepEqual(await moonResponse.json(), { scene: "A quiet city street glows after the rain." });
   assert.equal(moonCalls.length, 1);
   assert.equal(moonCalls[0].url, "https://api.moondream.ai/v1/query");
   assert.equal(moonCalls[0].headers["X-Moondream-Auth"], "moon-test-key");
   assert.equal(moonCalls[0].body.model, "moondream3.1-9B-A2B");
   assert.equal(moonCalls[0].body.image_url, "data:image/jpeg;base64,AA==");
+  assert.match(moonCalls[0].body.question, /one short English sentence/);
+
+  globalThis.fetch = async (url) => String(url).includes("moondream.ai")
+    ? Response.json({ answer: `图片的画面：${"景、".repeat(120)}` })
+    : new Response(visible);
+  const repeatedFallback = await route.POST(request());
+  assert.deepEqual(await repeatedFallback.json(), { scene: sceneText });
 
   globalThis.fetch = async (url) => String(url).includes("moondream.ai")
     ? Response.json({ error: "temporary" }, { status: 503 })
     : new Response(visible);
   const moonFallback = await route.POST(request());
   assert.equal(moonFallback.status, 200);
-  assert.match(await moonFallback.text(), /雨夜街道/);
+  assert.deepEqual(await moonFallback.json(), { scene: sceneText });
 
   delete process.env.GEMINI_API_KEY;
-  globalThis.fetch = async () => Response.json({ answer: "" });
+  globalThis.fetch = async () => Response.json({ answer: `图片的画面：${"景、".repeat(120)}` });
   assert.equal((await route.POST(request())).status, 502);
 
   process.env.GEMINI_API_KEY = "test-key";
@@ -64,7 +72,7 @@ try {
   assert.equal(first.status, 200);
   assert.deepEqual(calls.map((call) => call.model), ["gemini-3.6-flash", "gemini-3.1-flash-lite"]);
   assert.equal(calls[1].body.generationConfig.thinkingConfig.thinkingLevel, "minimal");
-  assert.match(await first.text(), /雨夜街道/);
+  assert.deepEqual(await first.json(), { scene: sceneText });
 
   calls.length = 0;
   await route.POST(request());

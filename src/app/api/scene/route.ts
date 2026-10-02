@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const MOONDREAM_API = "https://api.moondream.ai/v1/query";
+const SCENE_QUESTION = "In one short English sentence, what is visibly happening in this image? Include the main subject, setting, light, and visual mood when clear. Use at most 35 words. Do not guess unseen details, mention music, list items, or repeat words.";
 const MODELS = [
   { id: "gemini-3.6-flash", thinkingLevel: "minimal", timeoutMs: 7_000 },
   { id: "gemini-3.1-flash-lite", thinkingLevel: "minimal", timeoutMs: 7_000 },
@@ -11,7 +12,23 @@ const MODELS = [
 const MODEL_COOLDOWN = new Map<string, number>();
 const FALLBACK_STATUSES = new Set([403, 404, 429, 500, 502, 503, 504]);
 
-function visibleTextInSse(payload: string): boolean {
+function usableScene(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const scene = value.trim().replace(/\s+/g, " ");
+  if (scene.length < 8 || scene.length > 240) return null;
+  const plain = scene.replace(/[\s\p{P}\p{S}]/gu, "").toLowerCase();
+  if (/(.)\1{5,}/u.test(plain)) return null;
+  for (let width = 2; width <= 8; width += 1) {
+    for (let start = 0; start + width * 3 <= plain.length; start += 1) {
+      const unit = plain.slice(start, start + width);
+      if (unit.repeat(3) === plain.slice(start, start + width * 3)) return null;
+    }
+  }
+  return scene;
+}
+
+function visibleTextInSse(payload: string): string | null {
+  let text = "";
   for (const event of payload.split(/\r?\n\r?\n/)) {
     const data = event.split(/\r?\n/)
       .filter((line) => line.startsWith("data:"))
@@ -22,12 +39,14 @@ function visibleTextInSse(payload: string): boolean {
       const chunk = JSON.parse(data) as {
         candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
       };
-      if (chunk.candidates?.[0]?.content?.parts?.some((part) => !part.thought && part.text?.trim())) return true;
+      for (const part of chunk.candidates?.[0]?.content?.parts ?? []) {
+        if (!part.thought && part.text) text += part.text;
+      }
     } catch {
       // A malformed event cannot count as a successful description.
     }
   }
-  return false;
+  return usableScene(text);
 }
 
 function recordCooldown(model: string, status: number, errorBody: string) {
@@ -64,16 +83,16 @@ export async function POST(request: Request) {
         body: JSON.stringify({
           model: "moondream3.1-9B-A2B",
           image_url: `data:image/jpeg;base64,${image}`,
-          question: "请用一句中文描述这张图片的画面，涵盖地点、光线、天气或室内外、氛围和主要物体。只输出这一句，不要推荐歌曲，不要分点。",
+          question: SCENE_QUESTION,
         }),
         signal: AbortSignal.any([request.signal, AbortSignal.timeout(7_000)]),
         cache: "no-store",
       });
       if (upstream.ok) {
         const result: unknown = await upstream.json();
-        const answer = result && typeof result === "object" && "answer" in result ? result.answer : null;
-        if (typeof answer === "string" && answer.trim()) {
-          return Response.json({ scene: answer.trim() }, { headers: { "Cache-Control": "no-store" } });
+        const answer = usableScene(result && typeof result === "object" && "answer" in result ? result.answer : null);
+        if (answer) {
+          return Response.json({ scene: answer }, { headers: { "Cache-Control": "no-store" } });
         }
       }
     } catch {
@@ -84,7 +103,7 @@ export async function POST(request: Request) {
   if (!geminiKey) return Response.json({ error: "Moondream 读图暂时不可用" }, { status: 502 });
 
   const contents = [{ role: "user", parts: [
-    { text: "请用一句中文描述这张图片的画面，涵盖地点、光线、天气或室内外、氛围和主要物体。只输出这一句，不要推荐歌曲，不要分点。" },
+    { text: "请用一句简短中文描述照片中确实可见的主体、环境、光线和氛围。不要猜测看不见的天气或地点，不要重复词语，不要提音乐或推荐歌曲。最多60个汉字。" },
     { inline_data: { mime_type: "image/jpeg", data: image } },
   ] }];
 
@@ -116,10 +135,9 @@ export async function POST(request: Request) {
         continue;
       }
       const payload = await upstream.text();
-      if (!visibleTextInSse(payload)) continue;
-      return new Response(payload, {
-        headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store" },
-      });
+      const scene = visibleTextInSse(payload);
+      if (!scene) continue;
+      return Response.json({ scene }, { headers: { "Cache-Control": "no-store" } });
     } catch {
       if (request.signal.aborted) break;
       // A slow or unreachable model should not hold up the next one.

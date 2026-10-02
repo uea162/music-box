@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { fallbackSongs } from "@/data/fallback-songs";
 import { songKey } from "@/lib/song-key";
 import { chooseSong, describeScene, jpegForGemini, type SongMatch } from "@/lib/photo-recommendation";
-import type { CatalogPage, CatalogSource, Song } from "@/types/song";
+import type { CatalogPage, Song } from "@/types/song";
 import type { JukeboxDebugApi } from "./debug";
 import { LocalContext } from "./LocalContext";
 
@@ -159,11 +159,6 @@ const CARD_BORDER_PLAYING_COLOR = "rgba(255, 255, 255, 0.88)";
 const CARD_BORDER_SELECTED_WIDTH = 0.022;
 const CARD_BORDER_SELECTED_COLOR = "#ffffff";
 const PREVIEW_SECONDS = 30;
-const SOURCE_LABELS: Record<CatalogSource, string> = {
-  itunes: "Live catalog · 30 sec previews",
-  snapshot: "Saved catalog · 30 sec previews",
-  fallback: "Offline study catalog",
-};
 const percent = (value: number) => `${Math.round(value * 100)}%`;
 
 const PALETTES = [
@@ -693,7 +688,6 @@ export function JukeboxExperience() {
   const [songs, setSongs] = useState<Song[]>([]);
   const firstCursorRef = useRef<string | null>(null);
   const [loadedCount, setLoadedCount] = useState(0);
-  const [source, setSource] = useState<CatalogSource>("fallback");
   const [phase, setPhase] = useState<Phase>("loading");
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -706,6 +700,7 @@ export function JukeboxExperience() {
   const photoRunRef = useRef(0);
   const photoStartedRef = useRef(0);
   const photoInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const [progress, setProgress] = useState(0);
   const playingIdRef = useRef(playingId);
   const selectedIdRef = useRef(selectedId);
@@ -731,7 +726,6 @@ export function JukeboxExperience() {
         if (cancelled) return;
         firstCursorRef.current = data.songs?.length ? data.nextCursor ?? null : null;
         setSongs(data.songs?.length ? data.songs : fallbackSongs);
-        setSource(data.source ?? "fallback");
         setPhase("idle");
       })
       .catch(() => {
@@ -2063,6 +2057,19 @@ export function JukeboxExperience() {
           if (file) void handlePhoto(file);
         }}
       />
+      <input
+        ref={cameraInputRef}
+        className="visually-hidden"
+        type="file"
+        accept="image/*"
+        capture="environment"
+        aria-label="拍摄照片"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (file) void handlePhoto(file);
+        }}
+      />
 
       <AnimatePresence>
         {phase === "reveal" && selectedSong ? (
@@ -2198,10 +2205,7 @@ export function JukeboxExperience() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2, duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
           >
-            <div className="dock-copy">
-              <strong>Let the room choose.</strong>
-              <span>{SOURCE_LABELS[source]}</span>
-            </div>
+            <p className="dock-intro">Show Jev your moment. Jev will pick a song for it.</p>
             <LocalContext />
             {(photoStatus === "reading" || photoStatus === "choosing" || photoStatus === "image-error" || photoStatus === "song-error") && (
               <p className={`dock-photo-status${photoStatus.endsWith("error") ? " is-error" : ""}`} role="status">
@@ -2211,13 +2215,25 @@ export function JukeboxExperience() {
               </p>
             )}
             <div className="dock-actions">
-              <button className="primary-action" onClick={chooseRandom} disabled={phase !== "idle" || !songs.length}>
-                {phase === "landing" ? "Bringing one forward…" : "Pick one record"}
+              <button type="button" className="primary-action" onClick={() => cameraInputRef.current?.click()} disabled={!songs.length}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M4 7h3l1.5-2h7L17 7h3v12H4z" />
+                  <circle cx="12" cy="13" r="3.5" />
+                </svg>
+                Take a photo
               </button>
-              <button className="ghost-action" onClick={() => photoInputRef.current?.click()} disabled={!songs.length}>
-                上传照片
+              <button type="button" className="ghost-action" aria-label="上传照片" title="上传照片" onClick={() => photoInputRef.current?.click()} disabled={!songs.length}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 15V4m0 0L8 8m4-4 4 4M5 15v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4" />
+                </svg>
+              </button>
+              <button type="button" className="ghost-action" aria-label="随机选一首歌" title="随机选一首歌" onClick={chooseRandom} disabled={phase !== "idle" || !songs.length || photoStatus === "reading" || photoStatus === "choosing"}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M4 7h3c5 0 5 10 10 10h3m0 0-3-3m3 3-3 3M4 17h3c2.5 0 3.8-2.5 5-5m2-3c.8-1.2 1.7-2 3-2h3m0 0-3-3m3 3-3 3" />
+                </svg>
               </button>
             </div>
+            <p className="dock-privacy">Your photo is read once, then thrown away.</p>
           </motion.section>
         </div>
       ) : null}

@@ -300,6 +300,49 @@ button {
   text-transform: uppercase;
 }
 
+.spin-status {
+  position: absolute;
+  z-index: 12;
+  left: 50%;
+  bottom: clamp(28px, 5vw, 52px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 36px);
+  padding: 11px 16px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 999px;
+  background: rgba(20, 14, 25, 0.8);
+  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(12px);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.spin-status-dots {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.spin-status-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: spin-status-pulse 900ms ease-in-out infinite alternate;
+}
+
+.spin-status-dots i:nth-child(2) { animation-delay: 150ms; }
+.spin-status-dots i:nth-child(3) { animation-delay: 300ms; }
+
+@keyframes spin-status-pulse {
+  from { opacity: 0.25; transform: scale(0.7); }
+  to { opacity: 1; transform: scale(1.2); }
+}
+
 .result-scrim {
   position: absolute;
   z-index: 11;

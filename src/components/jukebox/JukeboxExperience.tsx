@@ -40,6 +40,10 @@ const STOPPED_SPEED = 0;
 const INTRO_SPEED = 16;
 const SPEED_EASE_TO_RUN = 1.6;
 const SPEED_EASE_TO_STOP = 6;
+const PHOTO_SPIN_SPEED = 17;
+const PHOTO_SPIN_EASE = 5;
+const PHOTO_MIN_SPIN_MS = 1100;
+const PHOTO_LANDING_MS = 450;
 const MAX_FRAME_SECONDS = 0.05;
 
 // [§10] Drag and inertia.
@@ -677,6 +681,7 @@ export function JukeboxExperience() {
     focus: (songId: string) => void;
     refit: () => void;
     reset: () => void;
+    spin: (mode: "start" | "settle" | "stop") => void;
     visibleCards: () => Array<{ song: Song; instanceIndex: number }>;
   } | null>(null);
   const resultPanelRef = useRef<HTMLElement>(null);
@@ -935,6 +940,7 @@ export function JukeboxExperience() {
     // the opening speed-up, drag, wheel, inertia and focus all feed `nudge`
     // or `speed`; column offsets are composed in one place, `columnOffset`.
     const wallMotion = {
+      photoSpin: "stop" as "start" | "settle" | "stop",
       targetSpeed: reducedMotion ? STOPPED_SPEED : RUNNING_SPEED,
       speed: reducedMotion ? STOPPED_SPEED : INTRO_SPEED,
       distance: 0,
@@ -983,7 +989,8 @@ export function JukeboxExperience() {
     const resolveTargetSpeed = () =>
       reducedMotion || pointer.pressed || inertiaActive() || playingIdRef.current !== null || focus.songId !== null
         ? STOPPED_SPEED
-        : RUNNING_SPEED;
+        : wallMotion.photoSpin === "start" ? PHOTO_SPIN_SPEED :
+          wallMotion.photoSpin === "settle" ? STOPPED_SPEED : RUNNING_SPEED;
 
     const nudge = (pan: number, scroll: number, column: number | null) => {
       wallMotion.pendingPan += pan;
@@ -1007,7 +1014,8 @@ export function JukeboxExperience() {
 
     const stepMotion = (dt: number) => {
       wallMotion.targetSpeed = resolveTargetSpeed();
-      const rate = wallMotion.targetSpeed === STOPPED_SPEED ? SPEED_EASE_TO_STOP : SPEED_EASE_TO_RUN;
+      const rate = wallMotion.targetSpeed === STOPPED_SPEED ? SPEED_EASE_TO_STOP :
+        wallMotion.photoSpin === "start" ? PHOTO_SPIN_EASE : SPEED_EASE_TO_RUN;
       wallMotion.speed += (wallMotion.targetSpeed - wallMotion.speed) * (1 - Math.exp(-dt * rate));
       wallMotion.distance += wallMotion.speed * dt;
 
@@ -1656,7 +1664,12 @@ export function JukeboxExperience() {
     sceneApiRef.current = {
       focus: focusSong,
       refit: fitFocus,
+      spin(mode) {
+        wallMotion.photoSpin = mode;
+        if (mode === "start") stopInertia();
+      },
       reset() {
+        wallMotion.photoSpin = "stop";
         focus.songId = null;
         focus.card = null;
         focus.gliding = false;
@@ -1964,6 +1977,7 @@ export function JukeboxExperience() {
     setSelectedId(null);
     selectedInstanceRef.current = null;
     sceneApiRef.current?.reset();
+    sceneApiRef.current?.spin("start");
 
     // Catalog loading runs beside image resizing and scene description instead of after them.
     const catalogPromise = fetch("/api/recommendation-catalog", { signal: controller.signal })
@@ -1981,6 +1995,7 @@ export function JukeboxExperience() {
     } catch (error) {
       if (controller.signal.aborted) return;
       controller.abort();
+      sceneApiRef.current?.spin("stop");
       setPhotoError(error instanceof Error ? error.message : "读图失败，请重试");
       setPhotoStatus("image-error");
       return;
@@ -1994,21 +2009,29 @@ export function JukeboxExperience() {
       setMatchedSongCount(catalog.songs?.length ?? 0);
       const result = await chooseSong(scene, catalog.songs ?? [], controller.signal);
       if (controller.signal.aborted || run !== photoRunRef.current) return;
+      const spinRemaining = PHOTO_MIN_SPIN_MS - (Date.now() - photoStartedRef.current);
+      if (spinRemaining > 0) await new Promise<void>((resolve) => window.setTimeout(resolve, spinRemaining));
+      if (controller.signal.aborted || run !== photoRunRef.current) return;
       setElapsed(Math.floor((Date.now() - photoStartedRef.current) / 1000));
       setMatch(result);
       setPhotoStatus("done");
+      setPhase("landing");
+      sceneApiRef.current?.spin("settle");
+      await new Promise<void>((resolve) => window.setTimeout(resolve, PHOTO_LANDING_MS));
+      if (controller.signal.aborted || run !== photoRunRef.current) return;
       selectedInstanceRef.current = null;
       selectedIdRef.current = result.song.id;
       setSelectedId(result.song.id);
       setSelectedSong(result.song);
-      setPhase("landing");
       sceneApiRef.current?.focus(result.song.id);
+      sceneApiRef.current?.spin("stop");
       void toggleSong(result.song);
       window.setTimeout(() => {
         if (run === photoRunRef.current) setPhase("reveal");
       }, 760);
     } catch (error) {
       if (controller.signal.aborted) return;
+      sceneApiRef.current?.spin("stop");
       setPhotoError(error instanceof Error ? error.message : "选歌失败，请重试");
       setPhotoStatus("song-error");
     }
@@ -2017,6 +2040,7 @@ export function JukeboxExperience() {
   const reset = useCallback(() => {
     photoRequestRef.current?.abort();
     photoRunRef.current += 1;
+    sceneApiRef.current?.spin("stop");
     setPhotoStatus("idle");
     setMatch(null);
     setPhotoPreview(null);
@@ -2060,6 +2084,7 @@ export function JukeboxExperience() {
       <canvas
         ref={canvasRef}
         className="scene-canvas"
+        style={{ pointerEvents: photoStatus === "reading" || photoStatus === "choosing" || phase === "landing" ? "none" : undefined }}
         aria-label="可拖拽的歌曲唱片墙。点击卡片可以播放试听。"
       />
       <div className="vignette" aria-hidden="true" />
@@ -2074,6 +2099,15 @@ export function JukeboxExperience() {
       </div>
 
       {phase === "loading" ? <p className="loading-copy">Cataloguing the room</p> : null}
+
+      {(photoStatus === "reading" || photoStatus === "choosing" || (photoStatus === "done" && phase === "landing")) && (
+        <div className="spin-status" role="status" aria-live="polite">
+          <span className="spin-status-copy">
+            {photoStatus === "reading" ? "正在解读照片" : photoStatus === "choosing" ? "正在为此刻选歌" : "找到这首歌了"}
+          </span>
+          <span className="spin-status-dots" aria-hidden="true"><i /><i /><i /></span>
+        </div>
+      )}
 
       <input
         ref={photoInputRef}
@@ -2253,7 +2287,7 @@ export function JukeboxExperience() {
         ) : null}
       </AnimatePresence>
 
-      {phase !== "reveal" ? (
+      {phase !== "reveal" && phase !== "landing" && photoStatus !== "reading" && photoStatus !== "choosing" ? (
         <div className="dock-anchor">
           <motion.section
             className="dock"
@@ -2263,11 +2297,9 @@ export function JukeboxExperience() {
           >
             <p className="dock-intro">Show Jev your moment. Jev will pick a song for it.</p>
             <LocalContext />
-            {(photoStatus === "reading" || photoStatus === "choosing" || photoStatus === "image-error" || photoStatus === "song-error") && (
-              <p className={`dock-photo-status${photoStatus.endsWith("error") ? " is-error" : ""}`} role="status">
-                {photoStatus === "reading" ? `正在读图 · 已过 ${elapsed} 秒` :
-                  photoStatus === "choosing" ? `正在选歌 · 已过 ${elapsed} 秒` :
-                    `${photoStatus === "image-error" ? "读图失败" : "选歌失败"}：${photoError}`}
+            {(photoStatus === "image-error" || photoStatus === "song-error") && (
+              <p className="dock-photo-status is-error" role="status">
+                {photoStatus === "image-error" ? "读图失败" : "选歌失败"}：{photoError}
               </p>
             )}
             <div className="dock-actions">
@@ -2283,7 +2315,7 @@ export function JukeboxExperience() {
                   <path d="M12 15V4m0 0L8 8m4-4 4 4M5 15v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4" />
                 </svg>
               </button>
-              <button type="button" className="ghost-action" aria-label="随机选一首歌" title="随机选一首歌" onClick={chooseRandom} disabled={phase !== "idle" || !songs.length || photoStatus === "reading" || photoStatus === "choosing"}>
+              <button type="button" className="ghost-action" aria-label="随机选一首歌" title="随机选一首歌" onClick={chooseRandom} disabled={phase !== "idle" || !songs.length}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M4 7h3c5 0 5 10 10 10h3m0 0-3-3m3 3-3 3M4 17h3c2.5 0 3.8-2.5 5-5m2-3c.8-1.2 1.7-2 3-2h3m0 0-3-3m3 3-3 3" />
                 </svg>

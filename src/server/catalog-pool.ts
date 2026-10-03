@@ -51,7 +51,9 @@ const SEED_LIMIT = 96;
 const SEED_RESULTS_PER_TERM = 10;
 const FEED_LIMIT = 100;
 export const POOL_LIMIT = 1200;
-export const MIN_POOL_SIZE = 12;
+// A handful of successful feeds is too narrow for photo matching. Prefer the
+// bundled 200-song snapshot until the live catalog offers at least as much.
+export const MIN_POOL_SIZE = 200;
 const UPSTREAM_TIMEOUT_MS = 5_000;
 const UPSTREAM_CONCURRENCY = 6;
 const UPSTREAM_REVALIDATE_SECONDS = 60 * 60 * 6;
@@ -301,13 +303,16 @@ export async function getCatalogPool(): Promise<CatalogPool | null> {
   if (!pendingPool) {
     pendingPool = buildPool()
       .then(({ pool, complete }) => {
-        if (pool) {
+        // Keep the broader pool when a refresh loses upstream feeds.
+        const bestPool = pool && (!cachedPool || complete || pool.songs.length >= cachedPool.pool.songs.length)
+          ? pool : cachedPool?.pool ?? null;
+        if (bestPool) {
           cachedPool = {
-            pool,
+            pool: bestPool,
             expiresAt: Date.now() + (complete ? POOL_TTL_MS : PARTIAL_POOL_TTL_MS),
           };
         }
-        return pool ?? cachedPool?.pool ?? null;
+        return bestPool;
       })
       .finally(() => {
         pendingPool = null;

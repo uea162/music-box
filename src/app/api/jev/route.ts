@@ -1,5 +1,4 @@
 import { catalogSnapshot, getCatalogPool } from "@/server/catalog-pool";
-import { songWithMood } from "@/server/song-mood";
 
 export const runtime = "nodejs";
 
@@ -34,8 +33,12 @@ export async function POST(request: Request) {
     return Response.json({ error: "选歌列表已过期，请重试" }, { status: 400 });
   }
   const criteria = Object.fromEntries(candidates.map((candidate) => {
-    const song = songWithMood(candidate!);
-    return [song.id, `${song.title} — ${song.artist}。${song.mood}`];
+    const song = candidate!;
+    return [song.id, [
+      `${song.title} — ${song.artist}`,
+      song.genre ? `曲风：${song.genre}` : null,
+      song.album ? `专辑：${song.album}` : null,
+    ].filter(Boolean).join("；")];
   }));
 
   try {
@@ -47,7 +50,7 @@ export async function POST(request: Request) {
         state: { scene },
         questions: { song: {
           type: "choice",
-          instructions: "哪一首歌的氛围最贴近 `scene`？按光线、天气、地点和情绪选，不要按歌名里的字面词硬套。",
+          instructions: "选一首听感和画面情绪最契合的歌。综合 scene 的人物、环境、光线、天气和情绪，以及歌曲已知的风格；不要只凭歌名的字面词或专辑封面联想，也不要把未知的歌曲特征当作事实。",
           criteria,
         } },
       }),

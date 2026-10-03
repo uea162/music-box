@@ -739,7 +739,11 @@ export function JukeboxExperience() {
   const freshRecommendations = useCallback((catalog: Song[]) => {
     const recent = new Set(recentSongKeysRef.current);
     const fresh = catalog.filter((song) => !recent.has(songKey(song)));
-    return fresh.length >= 4 ? fresh : catalog;
+    if (fresh.length) return fresh;
+    // Once a small catalog is exhausted, release the oldest entries first.
+    const oldest = [...recentSongKeysRef.current].reverse()
+      .find((key) => catalog.some((song) => songKey(song) === key));
+    return oldest ? catalog.filter((song) => songKey(song) === oldest) : catalog;
   }, []);
 
   useEffect(() => {
@@ -1959,7 +1963,9 @@ export function JukeboxExperience() {
     const candidates = nearby.length ? nearby : songs.map((song) => ({ song, instanceIndex: null }));
     const recent = new Set(recentSongKeysRef.current);
     const fresh = candidates.filter((candidate) => !recent.has(songKey(candidate.song)));
-    const pool = fresh.length ? fresh : candidates.filter((candidate) => candidate.song.id !== selectedSong?.id);
+    const allFresh = freshRecommendations(songs);
+    const pool = fresh.length ? fresh
+      : allFresh.map((song) => ({ song, instanceIndex: null }));
     const pick = pool[Math.floor(Math.random() * pool.length)] ?? candidates[0];
     const song = pick.song;
     setMatch(null);
@@ -1974,7 +1980,7 @@ export function JukeboxExperience() {
     sceneApiRef.current?.focus(song.id);
     void toggleSong(song);
     window.setTimeout(() => setPhase("reveal"), 760);
-  }, [phase, rememberSong, selectedSong?.id, songs, toggleSong]);
+  }, [freshRecommendations, phase, rememberSong, songs, toggleSong]);
 
   const selectMatchSong = useCallback((song: Song) => {
     if (song.id === selectedSong?.id) return;

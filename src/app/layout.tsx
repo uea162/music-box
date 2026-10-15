@@ -19,6 +19,11 @@ const fontUi = Bricolage_Grotesque({
 export const metadata: Metadata = {
   title: "Music Box — one record for this moment",
   description: "A tactile wall of songs that finds one record for right now.",
+  verification: {
+    other: {
+      "msvalidate.01": "B55605561D81D8B2E6651DE9B0E22B49",
+    },
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
